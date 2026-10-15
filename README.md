@@ -4,7 +4,7 @@ DSH (DeepSeek Harness) 用 Host プラグイン。最後のセッション更新
 アーカイブ済みセッションは新規ステップの実行が拒否される(閲覧のみ)ので、プロンプトキャッシュが切れた後の誤送信で
 通常のインプット料金が発生することを防げる。アーカイブは GUI から解除できる。
 
-状態: 実装済み(T1〜T8)/ 実機検証(T9)前。仕様は [docs/spec.md](docs/spec.md)、調査は [docs/spike.md](docs/spike.md)。
+状態: 実装済み・実機検証済み(T9: 選定、アーカイブ、解除後の猶予、設定のライブ反映)。仕様は [docs/spec.md](docs/spec.md)、調査は [docs/spike.md](docs/spike.md)。
 
 ## 動作の要点
 - 60 秒ごとにチェックし、アイドルが `idleMinutes` を超えたトップレベルのセッションをアーカイブする。
@@ -32,10 +32,16 @@ DSH を再起動すると有効になる。まず `dryRun: true` で対象をロ
 | `dryRun` | false | ログのみ(アーカイブしない) |
 | `stateFile` | `$DSH_HOME(~/.dsh)/cache-sentinel/state.json` | 永続状態 |
 
+## ログ
+`journalctl --user -u deepseek-harness | grep cache-sentinel`。DSH の `ctx.logger` は出力先がないと捨てられるため、`[cache-sentinel]` 付きで console にも出している。
+
 ## 制限
+- メッセージのない空のセッション(GUI が自動作成するもの)もアーカイブ対象になる。GUI の一覧には出ないので実害はない。
 - セッション保存先は `$DSH_HOME/sessions`(既定 `~/.dsh/sessions`)を前提とする。保存先を変えている場合は mtime が取れず `createdAt` で代用される。
 - 設定画面(GUI)とスキーマ公開は未対応。
 - アーカイブを解除して再送信した最初の 1 回は、キャッシュが切れているので通常のインプット料金になる。
 
 ## 開発
+`scripts/dsh-rpc.mjs <namespace/method> '<request JSON>'` で DSH の RPC を直接呼べる(例: `workspace/unarchiveSession` `{"sessionId":"..."}`)。
+journal の起動 URL からトークンを読むため、systemd で動かしている環境専用の検証用スクリプト。
 `pnpm test`(node:test)/ `pnpm run typecheck` / `pnpm run build`。実装は [docs/implementation-plan.md](docs/implementation-plan.md) の T1〜T9 に沿って進めた。
