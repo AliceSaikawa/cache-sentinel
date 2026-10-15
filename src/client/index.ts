@@ -4,7 +4,8 @@
  * 判定は banner.ts の純粋関数に任せ、ここでは取得と描画だけを行う。React はシェルが提供する。
  */
 import { createElement as h, useCallback, useEffect, useState } from 'react'
-import { bannerFor, parseStatus, statusUrl, UNLOCK_LABEL, type StatusLike } from './banner.ts'
+import { bannerFor, UNLOCK_LABEL, type StatusLike } from './banner.ts'
+import { fetchStatus } from './fetch-status.ts'
 
 export const name = 'cache-sentinel-client'
 export const inject = ['slots', 'remote']
@@ -44,17 +45,6 @@ export function apply(ctx: unknown): void {
   )
 }
 
-/** 状態を 1 回取得する。失敗したら undefined(表示しない)。 */
-export async function fetchStatus(sessionId: string, base: string = document.baseURI): Promise<StatusLike | undefined> {
-  try {
-    const response = await fetch(statusUrl(base, sessionId), { credentials: 'same-origin', cache: 'no-store' })
-    if (!response.ok) return undefined
-    return parseStatus(await response.json())
-  } catch {
-    return undefined
-  }
-}
-
 const styles = {
   box: {
     display: 'flex',
@@ -87,7 +77,7 @@ function Banner({ sessionId, unlock }: BannerProps) {
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
-    setStatus(await fetchStatus(sessionId))
+    setStatus(await fetchStatus(sessionId, document.baseURI))
   }, [sessionId])
 
   useEffect(() => {
