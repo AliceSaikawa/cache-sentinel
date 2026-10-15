@@ -1,21 +1,28 @@
 /**
- * 永続状態 (state.json) の読み書き・破損復旧・掃除 (§7)。
- * 純粋関数 (parseState / pruneState) と副作用 (loadState / saveState) を分ける。
+ * 永続状態 (state.json, version 2) の読み書き・破損復旧 (§C)。
+ * 純粋関数 (parseState) と副作用 (loadState / saveState) を分ける。
  * ファイル操作は node:fs/promises のみを使う。
  */
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 
+import { isMode, type Mode } from './modes.ts'
+
 export interface State {
-  version: 1
-  baselineAt: number
+  version: 2
+  /** 実効モードの優先値 (§A)。無ければ YAML の `mode` を使う。 */
+  mode?: Mode
+  /** アーカイブが初めて有効になった時刻 (§B)。無ければ有効化時に記録する。 */
+  baselineAt?: number
+  /** 手動解除を観測した時刻 (sessionId → epoch ms)。 */
   unarchivedAt: Record<string, number>
 }
 
-/** 手動解除の記録を保持する期間 (§7: 7 日)。 */
+/** 手動解除の記録を保持する期間 (archive-spec §7: 7 日)。 */
 export const STATE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 
-function freshState(now: number): State {
-  return { version: 1, baselineAt: now, unarchivedAt: {} }
+/** 空の状態 (mode なし・baselineAt なし)。 */
+export function emptyState(): State {
+  return { version: 2, unarchivedAt: {} }
 }
 
 /** 時刻として妥当な値か (非負の有限数)。 */
@@ -23,89 +30,95 @@ function isNonNegativeFinite(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
 }
 
+/** unarchivedAt のエントリのうち、値が非負有限数でないものを捨てる。 */
+function parseUnarchivedAt(value: unknown): Record<string, number> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return {}
+  }
+
+  const entries: Array<[string, number]> = []
+  for (const [id, at] of Object.entries(value as Record<string, unknown>)) {
+    if (isNonNegativeFinite(at)) {
+      entries.push([id, at])
+    }
+  }
+  return Object.fromEntries(entries)
+}
+
 /**
- * state.json の内容を解釈する。
- * - undefined / JSON 不正 / version 不一致 / baselineAt 不正 は全体を破損とみなし、
- *   baselineAt = now の新規 State を返す (§7 の安全側)。
- * - unarchivedAt の個別エントリが不正な場合は、そのエントリだけ捨てる。
+ * state.json の内容を解釈する (§C)。
+ * - undefined / JSON 不正 / オブジェクトでない / version が 1 でも 2 でもない → 空の状態。
+ * - version 1: `baselineAt` は必須なので、非負有限数でなければ空の状態。
+ * - version 2: `baselineAt` と `mode` は省略可。不正な項目だけ捨てる。
+ * - `unarchivedAt` は v1 / v2 とも、オブジェクトでなければ {}、
+ *   値が非負有限数でないエントリだけ捨てる。
+ * 結果は常に version 2 で、未設定のキーは含めない。
  */
-export function parseState(text: string | undefined, now: number): State {
+export function parseState(text: string | undefined): State {
   if (text === undefined) {
-    return freshState(now)
+    return emptyState()
   }
 
   let raw: unknown
   try {
     raw = JSON.parse(text)
   } catch {
-    return freshState(now)
+    return emptyState()
   }
 
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-    return freshState(now)
+    return emptyState()
   }
 
   const record = raw as Record<string, unknown>
-  if (record.version !== 1) {
-    return freshState(now)
+  const version = record.version
+  if (version !== 1 && version !== 2) {
+    return emptyState()
   }
+
+  const state = emptyState()
 
   const baselineAt = record.baselineAt
-  if (!isNonNegativeFinite(baselineAt)) {
-    return freshState(now)
-  }
+  const mode = record.mode
 
-  // unarchivedAt は不正なエントリだけ捨てる。オブジェクトでなければ空として扱う。
-  const entries: Array<[string, number]> = []
-  const rawUnarchivedAt = record.unarchivedAt
-  if (rawUnarchivedAt !== null && typeof rawUnarchivedAt === 'object' && !Array.isArray(rawUnarchivedAt)) {
-    for (const [id, at] of Object.entries(rawUnarchivedAt as Record<string, unknown>)) {
-      if (isNonNegativeFinite(at)) {
-        entries.push([id, at])
-      }
+  if (version === 1) {
+    // v1 は baselineAt 必須。不正なら全体を破損とみなす。
+    if (!isNonNegativeFinite(baselineAt)) {
+      return emptyState()
+    }
+    state.baselineAt = baselineAt
+  } else {
+    // v2 は baselineAt も mode も省略可。不正な項目だけ捨てる。
+    if (isNonNegativeFinite(baselineAt)) {
+      state.baselineAt = baselineAt
+    }
+    if (isMode(mode)) {
+      state.mode = mode
     }
   }
 
-  return { version: 1, baselineAt, unarchivedAt: Object.fromEntries(entries) }
+  state.unarchivedAt = parseUnarchivedAt(record.unarchivedAt)
+  return state
 }
 
 /**
- * 不要になった解除記録を除いた新しい State を返す (入力を変更しない)。
- * - now - STATE_RETENTION_MS より古い記録を削除する (境界値は残す)。
- * - knownIds が与えられたら、そこに含まれない id も削除する。
- */
-export function pruneState(state: State, now: number, knownIds?: ReadonlySet<string>): State {
-  const cutoff = now - STATE_RETENTION_MS
-  const entries = Object.entries(state.unarchivedAt).filter(([id, at]) => {
-    if (at < cutoff) {
-      return false
-    }
-    if (knownIds !== undefined && !knownIds.has(id)) {
-      return false
-    }
-    return true
-  })
-
-  return { version: 1, baselineAt: state.baselineAt, unarchivedAt: Object.fromEntries(entries) }
-}
-
-/**
- * state.json を読む。ファイル欠落・読み取りエラーは破損として新規 State を返す (§7)。
+ * state.json を読む。ファイル欠落・読み取りエラーは空の状態として扱う (§C)。
  * ファイルは作らない。
  */
-export async function loadState(path: string, now: number): Promise<State> {
+export async function loadState(path: string): Promise<State> {
   let text: string
   try {
     text = await readFile(path, 'utf8')
   } catch {
-    return freshState(now)
+    return emptyState()
   }
-  return parseState(text, now)
+  return parseState(text)
 }
 
 /**
  * state.json を atomic に書く (同じディレクトリの一時ファイル → rename)。
  * 親ディレクトリは mkdir -p する。JSON は整形し末尾に改行を付ける。
+ * rename に失敗したら一時ファイルを消して例外を伝える。
  */
 export async function saveState(path: string, state: State): Promise<void> {
   const dir = parentDir(path)
