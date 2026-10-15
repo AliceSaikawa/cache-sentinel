@@ -1,23 +1,16 @@
 export interface Config {
   idleMinutes: number
-  checkIntervalSeconds: number
-  skipPinned: boolean
-  archiveExisting: boolean
-  maxPerCycle: number
+  unlockTtlMinutes: number
   dryRun: boolean
-  stateFile?: string
 }
 
-export const DEFAULTS: Required<Omit<Config, 'stateFile'>> = {
+export const DEFAULTS: Config = {
   idleMinutes: 60,
-  checkIntervalSeconds: 60,
-  skipPinned: true,
-  archiveExisting: false,
-  maxPerCycle: 20,
+  unlockTtlMinutes: 10,
   dryRun: false,
 }
 
-const KNOWN_KEYS: ReadonlySet<string> = new Set([...Object.keys(DEFAULTS), 'stateFile'])
+const KNOWN_KEYS: ReadonlySet<string> = new Set(Object.keys(DEFAULTS))
 
 function readInteger(raw: Record<string, unknown>, key: string, min: number): number {
   const value = raw[key]
@@ -45,8 +38,8 @@ function readBoolean(raw: Record<string, unknown>, key: string): boolean {
  * 生の設定値を検証し、既定値で補完した Config を返す。
  * - undefined / null / {} はすべて既定値。
  * - 部分指定は既定値で補完する。
- * - 未知のキーは無視せず例外にする(設定ミスを握りつぶさない)。
- * - 型不正・範囲外は Error を投げる。
+ * - 未知のキーは無視せず例外にする(設定ミスを握りつぶさない)。旧方式のキーも未知として弾く。
+ * - 型不正・非整数・非有限・範囲外は Error を投げる。
  */
 export function parseConfig(raw: unknown): Config {
   if (raw === undefined || raw === null) {
@@ -68,26 +61,11 @@ export function parseConfig(raw: unknown): Config {
   if (obj.idleMinutes !== undefined) {
     config.idleMinutes = readInteger(obj, 'idleMinutes', 1)
   }
-  if (obj.checkIntervalSeconds !== undefined) {
-    config.checkIntervalSeconds = readInteger(obj, 'checkIntervalSeconds', 10)
-  }
-  if (obj.skipPinned !== undefined) {
-    config.skipPinned = readBoolean(obj, 'skipPinned')
-  }
-  if (obj.archiveExisting !== undefined) {
-    config.archiveExisting = readBoolean(obj, 'archiveExisting')
-  }
-  if (obj.maxPerCycle !== undefined) {
-    config.maxPerCycle = readInteger(obj, 'maxPerCycle', 1)
+  if (obj.unlockTtlMinutes !== undefined) {
+    config.unlockTtlMinutes = readInteger(obj, 'unlockTtlMinutes', 1)
   }
   if (obj.dryRun !== undefined) {
     config.dryRun = readBoolean(obj, 'dryRun')
-  }
-  if (obj.stateFile !== undefined) {
-    if (typeof obj.stateFile !== 'string') {
-      throw new Error('設定 stateFile は文字列で指定してください')
-    }
-    config.stateFile = obj.stateFile
   }
 
   return config
