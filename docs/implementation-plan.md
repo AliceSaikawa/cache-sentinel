@@ -65,3 +65,20 @@
   「閲覧のみ」(見られるが送れない)は DSH のアーカイブでは実現できない。必要なら別方式(下記)を検討する。
 - 将来の選択肢: アーカイブせず、Host 側で `agent/pre-step` を使って「1 時間超のセッションへのステップ」を拒否すれば閲覧のみにできる。
   ただしブロック時の確認・上書き手段の UI が必要になり、規模が大きい。
+
+
+---
+
+# 閲覧のみ方式 (spec v0.3) の実装計画 — 2026-10-15
+
+アーカイブ方式は停止済み(profile で `disabled: true`)。同じリポジトリで作り直す。版は 0.3.0。
+
+| # | タスク | 担当 | 成果物 |
+|---|---|---|---|
+| T10 | 旧方式のコード削除(decide/state/diff-unarchive/activity/cycle とテスト) | Claude | 削除 |
+| T11 | `src/config.ts` を spec §6 のキーに置き換え | flash | config.ts + テスト |
+| T12 | `src/gate.ts`: `decideGate`(spec §3, §4 の判定) | flash | 純粋関数 + テスト |
+| T13 | `src/last-response.ts`: イベント列から最終応答時刻、セッション別キャッシュ | flash | + テスト |
+| T14 | `src/unlock.ts`: 許可の記録と `/unlock` の応答文(spec §4) | flash | + テスト |
+| T15 | `src/index.ts`: pre-step(prepend)・session/event・commands の接続 | Claude | + テスト(flash) |
+| T16 | 実機検証(B1〜B9、GUI でのブロック表示) | Claude + ユーザー | 記録 |
