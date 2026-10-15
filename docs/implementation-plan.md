@@ -38,8 +38,11 @@
 - 導入: `dsh plugin --profile web add file:.../cache-sentinel-0.1.1.tgz`。プロファイルのバックアップは
   `~/.dsh/profiles/web/{package.json,pnpm-lock.yaml,cordis.patch.yml}.bak-before-20261015-cache-sentinel`。
 - 観察1: `patchReload: live` で、導入直後に **Host 側がライブで読み込まれた**(`~/.dsh/cache-sentinel/state.json` が作られた)。
-- 観察2: 差し替え後の新コード(0.1.1)は**再起動するまで反映されない**。patch の config 変更だけは反映される。
-- 観察3: `ctx.logger.info` は journal(`journalctl --user -u deepseek-harness`)に出ない。warn は出る見込み。
-  そのため dryRun 中は info を warn で出す(0.1.1)。
+- 観察2: 差し替え後の新コード(0.1.1)は**再起動するまで反映されない**。patch の config 変更がライブで反映されるかは**未確認**。
+- 観察3: 20:13:39 の再起動後、0.1.1 は 20:21:30 に起動したが(state.json の mtime)、**warn も含め journal に何も出なかった**。
+  `ctx.logger` は exporter(`plugin-logger-console`)がないと捨てられ、DSH には同梱されていない(`cordis/README.md`)。
+  他プラグイン(`[claude-oauth]` 等)は console に直接書いている。→ 0.1.2 で `[cache-sentinel]` 付きで console にも出す(`src/log.ts`)。
+- 観察4: 20:21:13 にプロセスが失敗メッセージなしで終了し(=終了コード 0 と推定)、systemd が自動再起動した。原因は未特定。
+  プラグイン由来の例外ならスタックトレースが残るはずなので、可能性は低いと見ている。
 - プロファイルの `cordis.patch.yml` 末尾に検証用設定(dryRun / idleMinutes 1 / archiveExisting)を追記済み。**検証後に削除すること。**
 - 検証手順は README を参照(再起動 → journal で dryRun ログ確認 → dryRun 解除)。

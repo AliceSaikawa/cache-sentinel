@@ -9,6 +9,7 @@ import { scanLogMtimes } from './activity.ts'
 import { parseConfig } from './config.ts'
 import { runCycle, type CycleDeps, type CycleLogger, type CycleMemory } from './cycle.ts'
 import type { SessionInfo } from './decide.ts'
+import { createLogger } from './log.ts'
 import { loadState, saveState } from './state.ts'
 
 export const name = 'cache-sentinel'
@@ -100,15 +101,12 @@ export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void
   const home = resolveHome()
   const stateFile = config.stateFile ?? join(home, 'cache-sentinel', 'state.json')
   const sessionsRoot = join(home, 'sessions')
-  // dryRun は結果を確認するための設定なので、既定のログレベルでも見えるよう info を warn で出す。
-  const logger: CycleLogger = config.dryRun
-    ? { debug: (m) => ctx.logger.debug(m), info: (m) => ctx.logger.warn(m), warn: (m) => ctx.logger.warn(m) }
-    : ctx.logger
+  const logger = createLogger(ctx.logger, console)
   const deps = { ...createDeps(ctx, () => scanLogMtimes(sessionsRoot)), log: logger }
 
   const initial = await loadState(stateFile, deps.now())
   await saveState(stateFile, initial).catch((error) => {
-    ctx.logger.warn(`cache-sentinel: state.json を書けませんでした: ${String(error)}`)
+    logger.warn(`state.json を書けませんでした: ${String(error)}`)
   })
   let memory: CycleMemory = { state: initial, prevArchived: undefined }
 
@@ -121,14 +119,14 @@ export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void
       memory = { state: result.state, prevArchived: result.prevArchived }
       if (result.stateChanged) {
         await saveState(stateFile, result.state).catch((error) => {
-          ctx.logger.warn(`cache-sentinel: state.json の保存に失敗しました: ${String(error)}`)
+          logger.warn(`state.json の保存に失敗しました: ${String(error)}`)
         })
       }
       if (result.archived.length > 0) {
-        logger.info(`cache-sentinel: ${result.archived.length} 件をアーカイブしました`)
+        logger.info(`${result.archived.length} 件をアーカイブしました`)
       }
     } catch (error) {
-      ctx.logger.warn(`cache-sentinel: サイクルに失敗しました: ${String(error)}`)
+      logger.warn(`サイクルに失敗しました: ${String(error)}`)
     } finally {
       running = false
     }
@@ -136,7 +134,7 @@ export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void
 
   ctx.interval(() => void tick(), config.checkIntervalSeconds * 1000)
   logger.info(
-    `cache-sentinel: 開始 (idle ${config.idleMinutes} 分, 間隔 ${config.checkIntervalSeconds} 秒${config.dryRun ? ', dryRun' : ''})`,
+    `開始 (idle ${config.idleMinutes} 分, 間隔 ${config.checkIntervalSeconds} 秒${config.dryRun ? ', dryRun' : ''})`,
   )
   void tick()
 }

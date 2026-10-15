@@ -1,6 +1,6 @@
 {
   "name": "cache-sentinel",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "DSH host plugin that archives sessions left idle longer than a threshold.",
   "type": "module",
   "private": false,
