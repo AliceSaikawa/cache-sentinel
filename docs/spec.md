@@ -1,4 +1,4 @@
-# cache-sentinel 仕様 v0.1 (draft)
+# cache-sentinel 仕様 v0.2 (draft)
 
 ## 1. 目的
 最後のセッション更新から一定時間(既定 60 分)を超えたセッションを自動でアーカイブする。
@@ -7,8 +7,9 @@
 
 ## 2. 用語
 - **最終アクティビティ時刻 (lastActivityAt)** = `max(最終イベント time, 手動解除時刻)`
-  - 最終イベント time: ロード済みセッションは `Session.ownEvents()` 末尾の `time`(epoch ms)。
-    未ロードの永続セッションはセッションログファイルの mtime で代用する。
+  - 最終イベント時刻: セッションログファイル(`<sessionsRoot>/*/<id>/session.v*.jsonl*`)の mtime。
+    ロード済み(`ctx.sessions.get(id)`)なら `ownEvents()` 末尾の `time`(epoch ms)との大きい方。
+    どちらも取れなければ `header.createdAt`。根拠は [spike.md](spike.md) U2。
   - 手動解除時刻: アーカイブ集合からの離脱をプラグインが観測した時刻(§5)。
 - **アイドル時間** = `now - lastActivityAt`
 - **基準時刻 (baselineAt)** = プラグインが初めて有効化された時刻。`state.json` に永続化(§7)。
@@ -77,9 +78,7 @@
 - A7: state.json 欠落/破損で起動してもクラッシュしない。
 - A8: archiveSession が例外を投げても他セッションの処理が続く。
 
-## 11. 未確認事項 (実装前に spike で確認)
-- U1: `ctx.workspaceRegistry` / `ctx.sessionPersistence` / `ctx.sessionStore` を inject して Host プラグインから使える形。
-- U2: 未ロードセッションのログ mtime のパスの取り方(`dsh-home-paths`、`~/.dsh/sessions/<cwd-slug>/<id>/session.v4.jsonl.zstd`)。
-- U3: ピン留め集合のプロパティ名(`pinnedSessionIds` 想定)。
-- U4: 手動アーカイブ解除を知るイベントの有無。無ければ §5 のポーリング差分で足りる。
-- U5: プラグインをプロファイルへ入れる方法(`dsh plugin` + `cordis.patch.yml`、dsh-webui-m3e と同形式)。
+## 11. 未確認事項
+U1〜U5 は [spike.md](spike.md) で解決済み。残り:
+- V1: ログディレクトリ名 `encodeSegment(id)` が UUID で恒等か(T7 で確認)。
+- V2: 実機でプラグインから `archiveSession` が呼べ、GUI に反映されるか(T9)。
