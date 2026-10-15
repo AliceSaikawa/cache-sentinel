@@ -12,6 +12,7 @@ import {
 } from '../src/block.ts'
 import type { TimedEvent } from '../src/last-response.ts'
 import type { Logger } from '../src/log.ts'
+import { buildBlockNotice, type NoticeMessage } from '../src/notice.ts'
 
 const MINUTE = 60_000
 const NOW = 1_700_000_000_000
@@ -297,4 +298,230 @@ test('idleMinutesOf: 時計巻き戻り(lastResponseAt > now)は 0', () => {
   const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
 
   assert.equal(sentinel.idleMinutesOf(session), 0)
+})
+
+// --- T35b: ブロック通知 (spec-ui v0.5 §D) と statusOf (§E1) ---
+
+/** append(type, data) の呼び出しを記録する偽 Session。 */
+function appendingSessionWith(id: string, events: () => readonly TimedEvent[]) {
+  const appends: Array<{ type: string; data: unknown }> = []
+  const { session: base, state } = sessionWith(id, events)
+  const session: SessionLike = {
+    ...base,
+    append(type: string, data: unknown) {
+      appends.push({ type, data })
+    },
+  }
+  return { session, appends, state }
+}
+
+/** append で渡された command/run の payload。 */
+interface CommandRunData {
+  commandId: string
+  name: string
+  args: string
+  source: { kind: string }
+}
+
+/** append で渡された command/done の payload。 */
+interface CommandDoneData {
+  commandId: string
+  kind: string
+  text: string
+}
+
+/** テキスト 1 件だけの入力。 */
+function textMessage(text: string): NoticeMessage {
+  return { content: [{ type: 'text', text }] }
+}
+
+/** 記録した append の i 番目を取り出す。 */
+function appendAt(appends: ReadonlyArray<{ type: string; data: unknown }>, index: number) {
+  const entry = appends[index]
+  assert.ok(entry !== undefined, `append の ${index} 番目がありません(全 ${appends.length} 件)`)
+  return entry
+}
+
+test('D-append1: ブロックすると command/run → command/done を追加し、文面は buildBlockNotice と一致する', async () => {
+  const log = makeLogger()
+  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const messages: NoticeMessage[] = [textMessage('捨てられる入力')]
+  const pass = nextSpy()
+
+  const result = await sentinel.onPreStep({ ...payload(session), messages }, pass.next)
+
+  assert.deepEqual(result, { kind: 'reject' })
+  assert.equal(pass.calls(), 0)
+  assert.equal(appends.length, 2)
+
+  assert.equal(appendAt(appends, 0).type, 'command/run')
+  const run = appendAt(appends, 0).data as CommandRunData
+  assert.match(run.commandId, /^cache-sentinel-/)
+  assert.equal(run.name, 'cache-sentinel')
+  assert.equal(run.args, '')
+  assert.deepEqual(run.source, { kind: 'user' })
+
+  assert.equal(appendAt(appends, 1).type, 'command/done')
+  const done = appendAt(appends, 1).data as CommandDoneData
+  assert.equal(done.commandId, run.commandId)
+  assert.equal(done.kind, 'error')
+  assert.equal(done.text, buildBlockNotice({ idleMinutes: 61, messages }))
+})
+
+test('D-append2: 2 回目のブロックでは commandId が変わる', async () => {
+  const log = makeLogger()
+  const clock = { now: NOW }
+  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, () => clock.now)
+  const messages: NoticeMessage[] = [textMessage('入力')]
+
+  await sentinel.onPreStep({ ...payload(session), messages }, nextSpy().next)
+  clock.now = NOW + MINUTE
+  await sentinel.onPreStep({ ...payload(session), messages }, nextSpy().next)
+
+  assert.equal(appends.length, 4)
+  const first = appendAt(appends, 0).data as CommandRunData
+  const second = appendAt(appends, 2).data as CommandRunData
+  assert.match(first.commandId, /^cache-sentinel-/)
+  assert.match(second.commandId, /^cache-sentinel-/)
+  assert.notEqual(first.commandId, second.commandId)
+})
+
+test('D-append3: dryRun では append しない', async () => {
+  const log = makeLogger()
+  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG, dryRun: true }, log.log, () => NOW)
+  const pass = nextSpy()
+
+  const result = await sentinel.onPreStep({ ...payload(session), messages: [textMessage('入力')] }, pass.next)
+
+  assert.equal(result, pass.decision)
+  assert.equal(pass.calls(), 1)
+  assert.equal(appends.length, 0)
+})
+
+test('D-append4: Session に append が無くても reject する', async () => {
+  const log = makeLogger()
+  const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const pass = nextSpy()
+
+  const result = await sentinel.onPreStep(payload(session), pass.next)
+
+  assert.deepEqual(result, { kind: 'reject' })
+  assert.equal(pass.calls(), 0)
+})
+
+test('D-append5: 入力 0 件のブロックは 10 分以内なら 1 回分だけ追加し、10 分後は再び追加する', async () => {
+  const log = makeLogger()
+  const clock = { now: NOW }
+  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, () => clock.now)
+
+  await sentinel.onPreStep(payload(session), nextSpy().next)
+  assert.equal(appends.length, 2)
+
+  clock.now = NOW + 9 * MINUTE
+  await sentinel.onPreStep(payload(session), nextSpy().next)
+  assert.equal(appends.length, 2)
+
+  clock.now = NOW + 10 * MINUTE
+  await sentinel.onPreStep(payload(session), nextSpy().next)
+  assert.equal(appends.length, 4)
+})
+
+test('D-append6: 入力があれば 10 分以内でも毎回追加する', async () => {
+  const log = makeLogger()
+  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const messages: NoticeMessage[] = [textMessage('入力')]
+
+  for (let i = 0; i < 3; i++) {
+    await sentinel.onPreStep({ ...payload(session), messages }, nextSpy().next)
+  }
+
+  assert.equal(appends.length, 6)
+})
+
+test('D-append7: append が例外を投げても reject を返し warn を出す', async () => {
+  const log = makeLogger()
+  const { session: base } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const session: SessionLike = {
+    ...base,
+    append() {
+      throw new Error('disk full')
+    },
+  }
+  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const pass = nextSpy()
+
+  const result = await sentinel.onPreStep({ ...payload(session), messages: [textMessage('入力')] }, pass.next)
+
+  assert.deepEqual(result, { kind: 'reject' })
+  assert.equal(pass.calls(), 0)
+  someMessage(
+    log.warn,
+    (m) => m.includes('ブロック通知を会話に追加できませんでした') && m.includes('s1') && m.includes('disk full'),
+  )
+})
+
+test('statusOf: セッション未読込は unknown で mode をそのまま返す', () => {
+  const log = makeLogger()
+  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+
+  assert.deepEqual(sentinel.statusOf(undefined, 'block'), {
+    mode: 'block',
+    gate: true,
+    state: 'unknown',
+    idleMinutes: null,
+    thresholdMinutes: 60,
+    unlockExpiresAt: null,
+    dryRun: false,
+  })
+})
+
+test('statusOf: 失効セッションは stale で、mode 引数をそのまま返す', () => {
+  const log = makeLogger()
+  const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE - 59_999 }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+
+  const status = sentinel.statusOf(session, 'both')
+
+  assert.equal(status.mode, 'both')
+  assert.equal(status.gate, true)
+  assert.equal(status.state, 'stale')
+  assert.equal(status.idleMinutes, 61)
+  assert.equal(status.thresholdMinutes, 60)
+  assert.equal(status.unlockExpiresAt, null)
+})
+
+test('statusOf: unlock 後は unlocked で、期限は許可時刻 + unlockTtlMinutes 分', () => {
+  const clock = { now: NOW }
+  const log = makeLogger()
+  const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, () => clock.now)
+
+  sentinel.unlock(agentOf(session), INACTIVE_TEXT)
+
+  const status = sentinel.statusOf(session, 'block')
+  assert.equal(status.state, 'unlocked')
+  assert.equal(status.unlockExpiresAt, NOW + 10 * MINUTE)
+
+  // 許可の期限が切れると stale に戻る。
+  clock.now = NOW + 11 * MINUTE
+  assert.equal(sentinel.statusOf(session, 'block').state, 'stale')
+})
+
+test('statusOf: isActive が偽なら inactive で gate も偽', () => {
+  const log = makeLogger()
+  const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW, () => false)
+
+  const status = sentinel.statusOf(session, 'block')
+
+  assert.equal(status.mode, 'block')
+  assert.equal(status.gate, false)
+  assert.equal(status.state, 'inactive')
+  assert.equal(status.unlockExpiresAt, null)
 })
