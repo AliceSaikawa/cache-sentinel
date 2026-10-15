@@ -1,6 +1,38 @@
-# cache-sentinel 仕様 v0.3 — 閲覧のみ方式 (draft)
+# cache-sentinel 仕様 v0.4 — モード切り替え (draft)
 
-旧アーカイブ方式は [legacy/archive-spec.md](legacy/archive-spec.md)(廃止)。
+## A. モード
+| モード | 動作 |
+|---|---|
+| `block`(既定) | 入力禁止(閲覧のみ)。本書 §1〜§9 |
+| `archive` | `idleMinutes` を超えたセッションを自動アーカイブ。[archive-spec.md](archive-spec.md) |
+| `both` | `idleMinutes` で入力禁止、さらに `archiveAfterMinutes`(既定 1440 = 24 時間)を超えたらアーカイブ |
+| `off` | 何もしない(`/sentinel` と `/unlock` は使える) |
+
+- 実効モード = state.json の `mode`(`/sentinel` で設定)があればそれ、なければ YAML の `mode`。
+- 入力禁止のゲートは実効モードが `block` / `both` のときだけ働く(`agent/pre-step` のリスナーは常に登録し、呼ばれるたびにモードを見る)。
+- アーカイブのサイクルは実効モードが `archive` / `both` のときだけ働く。
+- `/unlock` は実効モードが `block` / `both` 以外なら「入力禁止は無効です(モード: X)」と返す。
+
+## B. `/sentinel` コマンド
+| 入力 | 動作 |
+|---|---|
+| `/sentinel` | 状態表示: 実効モードとその出どころ(コマンド / YAML)、しきい値、このセッションの最終応答からの経過分、dryRun |
+| `/sentinel block` / `archive` / `both` / `off` | 実効モードを変更し、state.json に保存(再起動後も維持)。変更後の状態を表示 |
+| `/sentinel default` | state.json の `mode` を消し、YAML の値に戻す |
+| それ以外 | エラー: 使い方を表示 |
+- モード変更は即時に反映する(次のステップ・次のサイクルから)。
+- `archive` / `both` に初めて変わったとき、state.json に `baselineAt` が無ければ現在時刻を記録する(過去のセッションを一斉にアーカイブしないため)。
+
+## C. 永続状態 (state.json, version 2)
+```json
+{ "version": 2, "mode": "both", "baselineAt": 1792062384184, "unarchivedAt": { "<sessionId>": 1792064310709 } }
+```
+- `mode` と `baselineAt` は省略可。version 1(`mode` なし・`baselineAt` 必須)も読める。破損時は空の状態(mode なし・baselineAt なし)。
+- 場所: `$DSH_HOME/cache-sentinel/state.json`(設定 `stateFile` で変更可)。
+
+---
+
+# 入力禁止(block)の詳細 — v0.3 から変更なし
 
 ## 1. 目的
 プロンプトキャッシュが切れた(最後のモデル応答から一定時間が過ぎた)セッションで、
@@ -46,12 +78,19 @@
 - 出すもの: 起動(設定値)、ブロック(セッション id・経過分・ステップ番号)、解除の付与、dryRun の判定。
 - 同じセッションで連続してブロックしてもログは毎回出す(頻度は送信回数分のみ)。
 
-## 6. 設定 (config)
+## 6. 設定 (config) — v0.4 で全モード分を統合
 | キー | 型 | 既定 | 意味 |
 |---|---|---|---|
-| `idleMinutes` | 整数 ≥1 | 60 | 失効とみなす経過時間 |
+| `mode` | `block`/`archive`/`both`/`off` | `block` | 既定モード(§A) |
+| `idleMinutes` | 整数 ≥1 | 60 | 入力禁止のしきい値。`archive` モードではアーカイブのしきい値 |
+| `archiveAfterMinutes` | 整数 ≥1 | 1440 | `both` モードのアーカイブのしきい値 |
 | `unlockTtlMinutes` | 整数 ≥1 | 10 | `/unlock` の有効時間 |
-| `dryRun` | boolean | false | 拒否せずログのみ |
+| `checkIntervalSeconds` | 整数 ≥10 | 60 | アーカイブのチェック間隔 |
+| `skipPinned` | boolean | true | ピン留めをアーカイブしない |
+| `archiveExisting` | boolean | false | 基準時刻より前に止まったセッションもアーカイブ対象にする |
+| `maxPerCycle` | 整数 ≥1 | 20 | 1 サイクルのアーカイブ上限 |
+| `dryRun` | boolean | false | 拒否もアーカイブもせずログのみ |
+| `stateFile` | string | `$DSH_HOME/cache-sentinel/state.json` | 永続状態 |
 未知キー・型不正は例外(旧方式と同じ方針)。
 
 ## 7. 最終応答時刻の取得
@@ -60,7 +99,6 @@
 - 取得に失敗したら通す(安全側=作業を止めない)。ログに warn。
 
 ## 8. 非目標 / 既知の制限
-- 旧アーカイブ方式の機能(自動アーカイブ、state.json、mtime 走査)はすべて削除する。
 - GUI でのバッジ表示・ブロック理由の表示(クライアントプラグインが必要)。ブロックが GUI でどう見えるかは T9 で確認する。
 - タイトル自動生成(`session-title-first-prompt-llm`)は最初の送信時に独立してモデルを呼ぶ。新規セッションか
   古いセッションのフォークの初回だけで、送るのは最初のメッセージのみなので対象外とする。
@@ -78,3 +116,7 @@
 - B7: `dryRun` では拒否しない。
 - B8: 最終応答時刻の取得失敗時は通す。
 - B9: 設定の検証(§6)。
+- C1: `/sentinel archive` で入力禁止が止まりアーカイブが始まる。`/sentinel block` で逆。`off` で両方止まる。
+- C2: `/sentinel` のモードは再起動後も維持され、`/sentinel default` で YAML に戻る。
+- C3: `both` では 60 分で入力禁止、24 時間でアーカイブ。
+- C4: 初めてアーカイブが有効になったとき、それ以前に止まっていたセッションはアーカイブされない(`archiveExisting: false`)。

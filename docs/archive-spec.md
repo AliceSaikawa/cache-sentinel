@@ -1,4 +1,10 @@
-# [廃止] cache-sentinel 仕様 v0.2 — アーカイブ方式(2026-10-15 に閲覧のみ方式へ置き換え)
+# cache-sentinel アーカイブモード仕様(v0.2 を v0.4 で `archive` / `both` モードとして復活)
+
+> v0.4 での変更点(本文より優先):
+> - アーカイブのしきい値は、`archive` モードでは `idleMinutes`、`both` モードでは `archiveAfterMinutes`。
+> - 永続状態は state.json version 2(`mode` を追加、[spec.md](spec.md) §C)。version 1 も読める。
+> - 基準時刻 `baselineAt` は「アーカイブが初めて有効になった時刻」。state.json に無ければ有効化時に記録する。
+> - アーカイブのサイクルは、モードが `archive` / `both` のときだけ動く(タイマーは常に回し、各サイクルの先頭で判定)。
 
 ## 1. 目的
 最後のセッション更新から一定時間(既定 60 分)を超えたセッションを自動でアーカイブする。

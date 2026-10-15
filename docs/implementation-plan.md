@@ -102,3 +102,18 @@
   - モデルへのリクエストは応答 1 と 4 の 2 回のみ(Haiku)。
 - 21:56:30 検証用設定を削除し、既定(60 分 / 10 分)で稼働中。旧方式の `~/.dsh/cache-sentinel/state.json` は削除した。
 - 未確認: GUI でブロックされたターンがどう見えるか(ユーザーに依頼)。B4(TTL 切れ)・B6(圧縮より先)は単体テストのみ。
+
+---
+
+# モード切り替え (spec v0.4) の実装計画 — 2026-10-15
+
+| # | タスク | 担当 | ファイル |
+|---|---|---|---|
+| T20 | 旧アーカイブのモジュールを履歴(b0d5606)から復元、`src/modes.ts` 作成 | Claude | decide/diff-unarchive/activity/cycle/state + tests, modes.ts |
+| T21 | 設定を全モード分に統合 | flash | config.ts |
+| T22 | state.json version 2(mode, baselineAt 省略可, v1 読み込み) | flash | state.ts |
+| T23 | cycle を設定非依存に(ArchiveSettings / CycleMemory 変更)、`pruneUnarchived` を diff-unarchive へ | flash | cycle.ts, diff-unarchive.ts |
+| T24 | モード判定と `/sentinel` の解析・文面 | flash | mode.ts |
+| T25 | index.ts: ゲート + アーカイブサイクル + `/sentinel` + 永続化 | Claude | index.ts |
+| T26 | index のテスト | flash | tests/index.test.ts |
+| T27 | 実機検証(C1〜C4) | Claude | — |
