@@ -143,4 +143,14 @@
 | T34 | 公式 UI のクライアント半分(client/index.ts)、ビルド(scripts/build.ts)、0.5.0 | Claude | 完了 |
 | T35 | テスト(index / block / fetch-status) | flash + Claude | 完了(306 件) |
 | T36 | M3E: worktree `../m3e-wt-cache-sentinel`、ブランチ `feat/cache-sentinel-notice` | Claude | Issue AliceSaikawa/dsh-webui-m3e#97 を作成。ローカルコミット 7ccfe9b(未 push)。単体 1206 pass / skip 2、typecheck・e2e tsc・build・check:pack 成功、e2e(composer-height/mock/operations)44 pass |
-| T37 | 実機検証(D1〜D3, E1〜E3) | — | 未実施。DSH の再起動と、M3E のブランチ版の導入にユーザーの承認が必要 |
+| T37 | 実機検証(D1〜D3, E1〜E3) | ユーザー | 一部実施(下記)。M3E のブランチ版は未導入 |
+
+## T37 実機検証の記録 (0.5.0, 2026-10-16, ユーザーの実機 iPhone)
+- 06:51:04 起動。`[cache-sentinel] 開始 (モード block, 入力禁止 60 分, both のアーカイブ 1440 分)`(patch に設定なし = 既定値)。
+- **E2(前半)** 公式 UI で失効したセッション(最終応答から 61 分)を開くと、入力欄の上に
+  「キャッシュ切れ(最終応答から 61 分)。このまま送ると止められます。」とボタン「次の 1 回を許可(/unlock)」が出た(スクリーンショットで確認)。
+- 送信のブロック: 公式 UI・m3e の両方で、失効したセッションへの送信が止められた(ユーザー報告)。
+- m3e: 表示は出ない。m3e は main のままでブランチ `feat/cache-sentinel-notice` を入れていないため想定どおり。
+  表示がなくても送信の邪魔にならないこと(取得失敗時に何も出さない)は確認できた。
+- 未検証: E2 後半(ボタンで許可され「許可中」に変わる)、D1 の会話行と破棄された文面、D2(再読み込み)、D3(連続通知の抑制)、
+  E1(未認証の拒否・sessionId なしの 400)、E3(m3e ブランチ版での表示)。
