@@ -14,11 +14,20 @@ import type { AgentLike, CommandResult, PreStepDecision, PreStepPayload, Session
 import { parseConfig, type Config } from '../src/config.ts'
 import type { CycleDeps, CycleLogger } from '../src/cycle.ts'
 import type { SessionInfo } from '../src/decide.ts'
-import { apply, createRuntime, type HostContext, type Runtime, type RuntimeIO } from '../src/index.ts'
+import {
+  apply,
+  createRuntime,
+  statusResponse,
+  STATUS_PATH,
+  type HostContext,
+  type Runtime,
+  type RuntimeIO,
+} from '../src/index.ts'
 import type { TimedEvent } from '../src/last-response.ts'
 import type { Logger } from '../src/log.ts'
 import { usageMessage } from '../src/mode.ts'
 import type { State } from '../src/state.ts'
+import type { StatusPayload } from '../src/status.ts'
 
 const MINUTE = 60_000
 const NOW = 1_700_000_000_000
@@ -341,19 +350,36 @@ interface IntervalCall {
   delayMs: number
 }
 
+type SessionEntry = SessionLike & { ownEvents(): readonly { time: number }[] }
+
+interface RouteCall {
+  path: string
+  methods: string[]
+  requestBody: 'buffered'
+  fetch: (request: Request) => Promise<Response>
+}
+
 interface HostHarness {
   ctx: HostContext
   onCalls: OnCall[]
   commandCalls: CommandCall[]
   intervalCalls: IntervalCall[]
+  /** connection.fetch.register に渡された route (呼び出し順)。 */
+  routeCalls: RouteCall[]
   loggerMessages: string[]
 }
 
+interface HostHarnessOptions {
+  /** ctx.sessions.get が返すセッション。既定は undefined(読み込まれていない)。 */
+  sessionGet?: (id: string) => SessionEntry | undefined
+}
+
 /** 登録だけを記録する偽 ctx。 */
-function makeHostHarness(): HostHarness {
+function makeHostHarness(options: HostHarnessOptions = {}): HostHarness {
   const onCalls: OnCall[] = []
   const commandCalls: CommandCall[] = []
   const intervalCalls: IntervalCall[] = []
+  const routeCalls: RouteCall[] = []
   const loggerMessages: string[] = []
   const logger: Logger = {
     debug: (msg) => loggerMessages.push(`debug:${msg}`),
@@ -383,10 +409,18 @@ function makeHostHarness(): HostHarness {
       archiveSession: async () => {},
     },
     sessionPersistence: { list: async () => [] },
-    sessions: { get: () => undefined },
+    sessions: { get: (id: string) => options.sessionGet?.(id) },
+    connection: {
+      fetch: {
+        register(route: RouteCall) {
+          routeCalls.push(route)
+          return {}
+        },
+      },
+    },
   }
 
-  return { ctx: raw as unknown as HostContext, onCalls, commandCalls, intervalCalls, loggerMessages }
+  return { ctx: raw as unknown as HostContext, onCalls, commandCalls, intervalCalls, routeCalls, loggerMessages }
 }
 
 test('T26b (10): apply は pre-step(prepend)・session/event・2 コマンド・interval を登録する', async (t) => {
@@ -410,9 +444,83 @@ test('T26b (10): apply は pre-step(prepend)・session/event・2 コマンド・
     assert.equal(host.intervalCalls[0]?.delayMs, 30_000)
 
     assert.ok(host.loggerMessages.some((msg) => msg.startsWith('info:開始')))
+
+    // 状態の取得口 (spec-ui.md §E1) を STATUS_PATH の GET で登録する。
+    assert.equal(host.routeCalls.length, 1)
+    const route = host.routeCalls[0]
+    assert.ok(route)
+    assert.equal(route.path, STATUS_PATH)
+    assert.deepEqual(route.methods, ['GET'])
+    assert.equal(route.requestBody, 'buffered')
+
+    const response = await route.fetch(new Request(`http://x${STATUS_PATH}?sessionId=s1`))
+    assert.equal(response.status, 200)
+    assert.match(response.headers.get('content-type') ?? '', /application\/json/)
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+    // 偽 ctx の sessions.get は undefined を返すので、読み込まれていないセッション = unknown。
+    const body = (await response.json()) as StatusPayload
+    assert.equal(body.state, 'unknown')
+    assert.equal(body.mode, 'block')
+    assert.equal(body.gate, true)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+// ---- (10b) statusResponse ----
+
+test('T35a (2): statusResponse は sessionId なし・空なら 400、あれば lookup の JSON を返す', async () => {
+  const payload: StatusPayload = {
+    mode: 'block',
+    gate: true,
+    state: 'stale',
+    idleMinutes: 75,
+    thresholdMinutes: 60,
+    unlockExpiresAt: null,
+    dryRun: false,
+  }
+  const seen: string[] = []
+  const lookup = (sessionId: string): StatusPayload => {
+    seen.push(sessionId)
+    return payload
+  }
+
+  const missing = statusResponse(new Request(`http://x${STATUS_PATH}`), lookup)
+  assert.equal(missing.status, 400)
+
+  const empty = statusResponse(new Request(`http://x${STATUS_PATH}?sessionId=`), lookup)
+  assert.equal(empty.status, 400)
+
+  // 400 のときは lookup を呼ばない。
+  assert.deepEqual(seen, [])
+
+  const ok = statusResponse(new Request(`http://x${STATUS_PATH}?sessionId=s1`), lookup)
+  assert.equal(ok.status, 200)
+  assert.equal(ok.headers.get('content-type'), 'application/json; charset=utf-8')
+  assert.equal(ok.headers.get('cache-control'), 'no-store')
+  assert.deepEqual(seen, ['s1'])
+  assert.deepEqual(await ok.json(), payload)
+})
+
+// ---- (10c) runtime.status ----
+
+test('T35a (3): runtime.status は block で失効セッションを stale、archive では inactive と mode を返す', () => {
+  const events: readonly TimedEvent[] = [{ type: 'step/end', time: NOW - 61 * MINUTE }]
+  const session = makeSession('s1', events)
+
+  const blockHarness = makeHarness(parseTestConfig({ mode: 'block', idleMinutes: 60 }), stateWith())
+  const stale = blockHarness.runtime.status(session)
+  assert.equal(stale.mode, 'block')
+  assert.equal(stale.gate, true)
+  assert.equal(stale.state, 'stale')
+  assert.equal(stale.idleMinutes, 61)
+  assert.equal(stale.thresholdMinutes, 60)
+
+  const archiveHarness = makeHarness(parseTestConfig({ mode: 'archive', idleMinutes: 60 }), stateWith())
+  const inactive = archiveHarness.runtime.status(session)
+  assert.equal(inactive.mode, 'archive')
+  assert.equal(inactive.gate, false)
+  assert.equal(inactive.state, 'inactive')
 })
 
 // ---- (11) createDeps / isActiveSessionError ----
