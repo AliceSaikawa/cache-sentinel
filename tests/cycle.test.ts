@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { runCycle, type CycleDeps, type CycleLogger, type CycleMemory } from '../src/cycle.ts'
-import { type Config } from '../src/config.ts'
+import {
+  runCycle,
+  UNARCHIVE_RETENTION_MS,
+  type ArchiveSettings,
+  type CycleDeps,
+  type CycleLogger,
+  type CycleMemory,
+} from '../src/cycle.ts'
 import { type SessionInfo } from '../src/decide.ts'
-import { type State } from '../src/state.ts'
 
 const MINUTE = 60_000
 const NOW = 1_700_000_000_000
@@ -24,10 +29,9 @@ function makeSession(overrides: Partial<SessionInfo> & { id: string }): SessionI
   }
 }
 
-function makeConfig(overrides: Partial<Config> = {}): Config {
+function makeSettings(overrides: Partial<ArchiveSettings> = {}): ArchiveSettings {
   return {
-    idleMinutes: 60,
-    checkIntervalSeconds: 60,
+    thresholdMinutes: 60,
     skipPinned: true,
     archiveExisting: false,
     maxPerCycle: 20,
@@ -36,8 +40,8 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
   }
 }
 
-function makeState(overrides: Partial<State> = {}): State {
-  return { version: 1, baselineAt: 0, unarchivedAt: {}, ...overrides }
+function makeMemory(overrides: Partial<CycleMemory> = {}): CycleMemory {
+  return { baselineAt: 0, unarchivedAt: {}, prevArchived: undefined, ...overrides }
 }
 
 interface DepsOptions {
@@ -95,14 +99,14 @@ test('A1: 61 分アイドルの未ピン留めセッションをアーカイブ�
     sessions: [makeSession({ id: 'a', lastActivityAt: NOW - 61 * MINUTE })],
   })
 
-  const result = await runCycle(deps, makeConfig(), { state: makeState(), prevArchived: undefined })
+  const result = await runCycle(deps, makeSettings(), makeMemory())
 
   assert.deepEqual(result.archived, ['a'])
   assert.deepEqual(calls, ['a'])
   assert.deepEqual(result.skippedActive, [])
   assert.deepEqual(result.failed, [])
   assert.deepEqual(result.dryRunTargets, [])
-  assert.deepEqual(result.state.unarchivedAt, {})
+  assert.deepEqual(result.unarchivedAt, {})
   assert.ok(logs.every((entry) => entry.level !== 'warn'))
 })
 
@@ -111,7 +115,7 @@ test('A2: 59 分アイドルは対象外 (archive を呼ばない)', async () =>
     sessions: [makeSession({ id: 'a', lastActivityAt: NOW - 59 * MINUTE })],
   })
 
-  const result = await runCycle(deps, makeConfig(), { state: makeState(), prevArchived: undefined })
+  const result = await runCycle(deps, makeSettings(), makeMemory())
 
   assert.deepEqual(calls, [])
   assert.deepEqual(result.archived, [])
@@ -127,7 +131,7 @@ test('A3: ピン留めと subagent は対象外 (skipPinned 既定)', async () =
     ],
   })
 
-  const result = await runCycle(deps, makeConfig(), { state: makeState(), prevArchived: undefined })
+  const result = await runCycle(deps, makeSettings(), makeMemory())
 
   assert.deepEqual(calls, [])
   assert.deepEqual(result.archived, [])
@@ -145,7 +149,7 @@ test('実行中 (isActiveError) は skippedActive に入り、他は継続し fa
     isActiveError: (error) => error instanceof Error && error.message === 'busy',
   })
 
-  const result = await runCycle(deps, makeConfig(), { state: makeState(), prevArchived: undefined })
+  const result = await runCycle(deps, makeSettings(), makeMemory())
 
   assert.deepEqual(result.skippedActive, ['busy'])
   assert.deepEqual(result.archived, ['ok'])
@@ -160,17 +164,11 @@ test('A4: archiveExisting=false は baseline より前を除外し、true で対
   const baselineAt = NOW - 30 * MINUTE
 
   const off = makeDeps({ sessions: [session] })
-  const offResult = await runCycle(off.deps, makeConfig({ archiveExisting: false }), {
-    state: makeState({ baselineAt }),
-    prevArchived: undefined,
-  })
+  const offResult = await runCycle(off.deps, makeSettings({ archiveExisting: false }), makeMemory({ baselineAt }))
   assert.deepEqual(offResult.archived, [])
 
   const on = makeDeps({ sessions: [session] })
-  const onResult = await runCycle(on.deps, makeConfig({ archiveExisting: true }), {
-    state: makeState({ baselineAt }),
-    prevArchived: undefined,
-  })
+  const onResult = await runCycle(on.deps, makeSettings({ archiveExisting: true }), makeMemory({ baselineAt }))
   assert.deepEqual(onResult.archived, ['a'])
 })
 
@@ -178,10 +176,7 @@ test('A4: baseline ちょうど一致なら archiveExisting=false でも対象',
   const lastActivityAt = NOW - 61 * MINUTE
   const { deps } = makeDeps({ sessions: [makeSession({ id: 'a', lastActivityAt })] })
 
-  const result = await runCycle(deps, makeConfig({ archiveExisting: false }), {
-    state: makeState({ baselineAt: lastActivityAt }),
-    prevArchived: undefined,
-  })
+  const result = await runCycle(deps, makeSettings({ archiveExisting: false }), makeMemory({ baselineAt: lastActivityAt }))
 
   assert.deepEqual(result.archived, ['a'])
 })
@@ -191,28 +186,25 @@ test('A5: 手動解除直後は猶予で再アーカイブされず、60 分超�
 
   // サイクル 1: 前回 archived に 'a' があり、今回ない → 解除を検出して unarchivedAt[a] = now
   const c1 = makeDeps({ now: NOW, sessions: [session], archivedIds: [] })
-  const r1 = await runCycle(c1.deps, makeConfig(), {
-    state: makeState(),
-    prevArchived: new Set(['a']),
-  })
+  const r1 = await runCycle(c1.deps, makeSettings(), makeMemory({ prevArchived: new Set(['a']) }))
   assert.deepEqual(r1.archived, [])
-  assert.equal(r1.state.unarchivedAt['a'], NOW)
-  assert.equal(r1.stateChanged, true)
+  assert.equal(r1.unarchivedAt['a'], NOW)
+  assert.equal(r1.unarchivedChanged, true)
 
   // サイクル 2: 解除から 30 分 → まだ猶予内
   const c2 = makeDeps({ now: NOW + 30 * MINUTE, sessions: [session], archivedIds: [] })
-  const r2 = await runCycle(c2.deps, makeConfig(), {
-    state: r1.state,
+  const r2 = await runCycle(c2.deps, makeSettings(), makeMemory({
+    unarchivedAt: r1.unarchivedAt,
     prevArchived: r1.prevArchived,
-  })
+  }))
   assert.deepEqual(r2.archived, [])
 
   // サイクル 3: 解除から 61 分 → 対象に戻る
   const c3 = makeDeps({ now: NOW + 61 * MINUTE, sessions: [session], archivedIds: [] })
-  const r3 = await runCycle(c3.deps, makeConfig(), {
-    state: r2.state,
+  const r3 = await runCycle(c3.deps, makeSettings(), makeMemory({
+    unarchivedAt: r2.unarchivedAt,
     prevArchived: r2.prevArchived,
-  })
+  }))
   assert.deepEqual(r3.archived, ['a'])
 })
 
@@ -224,15 +216,12 @@ test('A6: dryRun では archive を呼ばず dryRunTargets に入れて info ロ
     ],
   })
 
-  const result = await runCycle(deps, makeConfig({ dryRun: true }), {
-    state: makeState(),
-    prevArchived: undefined,
-  })
+  const result = await runCycle(deps, makeSettings({ dryRun: true }), makeMemory())
 
   assert.deepEqual(calls, [])
   assert.deepEqual(result.archived, [])
   assert.deepEqual(result.dryRunTargets, ['a', 'b'])
-  assert.equal(result.stateChanged, false)
+  assert.equal(result.unarchivedChanged, false)
   assert.equal(logs.filter((entry) => entry.level === 'info').length, 2)
 })
 
@@ -247,7 +236,7 @@ test('A8: archive が例外を投げても他の id は処理され、warn に i
     },
   })
 
-  const result = await runCycle(deps, makeConfig(), { state: makeState(), prevArchived: undefined })
+  const result = await runCycle(deps, makeSettings(), makeMemory())
 
   assert.deepEqual(result.archived, ['good'])
   assert.deepEqual(result.failed, ['bad'])
@@ -267,10 +256,7 @@ test('maxPerCycle の上限までしか処理しない (残りは次回)', async
     ],
   })
 
-  const result = await runCycle(deps, makeConfig({ maxPerCycle: 2 }), {
-    state: makeState(),
-    prevArchived: undefined,
-  })
+  const result = await runCycle(deps, makeSettings({ maxPerCycle: 2 }), makeMemory())
 
   assert.deepEqual(calls, ['a', 'b'])
   assert.deepEqual(result.archived, ['a', 'b'])
@@ -279,13 +265,10 @@ test('maxPerCycle の上限までしか処理しない (残りは次回)', async
 test('初回 (prevArchived undefined) は解除を検出しない', async () => {
   const { deps } = makeDeps({ sessions: [], archivedIds: ['a', 'b'] })
 
-  const result = await runCycle(deps, makeConfig(), {
-    state: makeState(),
-    prevArchived: undefined,
-  })
+  const result = await runCycle(deps, makeSettings(), makeMemory({ prevArchived: undefined }))
 
-  assert.deepEqual(result.state.unarchivedAt, {})
-  assert.equal(result.stateChanged, false)
+  assert.deepEqual(result.unarchivedAt, {})
+  assert.equal(result.unarchivedChanged, false)
   assert.deepEqual([...result.prevArchived], ['a', 'b'])
 })
 
@@ -293,51 +276,63 @@ test('自分がアーカイブした id は次サイクルで解除扱いされ�
   const session = makeSession({ id: 'a', lastActivityAt: NOW - 61 * MINUTE })
 
   const c1 = makeDeps({ now: NOW, sessions: [session], archivedIds: [] })
-  const r1 = await runCycle(c1.deps, makeConfig(), {
-    state: makeState(),
-    prevArchived: undefined,
-  })
+  const r1 = await runCycle(c1.deps, makeSettings(), makeMemory())
   assert.deepEqual(r1.archived, ['a'])
   assert.deepEqual([...r1.prevArchived], ['a'])
 
   // 次サイクル: 'a' が archivedSessionIds に現れる (自分のアーカイブ)
   const archivedSession = makeSession({ id: 'a', lastActivityAt: NOW - 61 * MINUTE, archived: true })
   const c2 = makeDeps({ now: NOW + MINUTE, sessions: [archivedSession], archivedIds: ['a'] })
-  const r2 = await runCycle(c2.deps, makeConfig(), {
-    state: r1.state,
+  const r2 = await runCycle(c2.deps, makeSettings(), makeMemory({
+    unarchivedAt: r1.unarchivedAt,
     prevArchived: r1.prevArchived,
-  })
+  }))
 
-  assert.deepEqual(r2.state.unarchivedAt, {})
-  assert.equal(r2.stateChanged, false)
+  assert.deepEqual(r2.unarchivedAt, {})
+  assert.equal(r2.unarchivedChanged, false)
   assert.deepEqual(r2.archived, [])
 })
 
-test('stateChanged: prune で unarchivedAt のキーが消えたら true', async () => {
+test('unarchivedChanged: prune で unarchivedAt のキーが消えたら true', async () => {
   const { deps } = makeDeps({ sessions: [], archivedIds: ['gone'] })
 
-  const result = await runCycle(deps, makeConfig(), {
-    state: makeState({ unarchivedAt: { gone: NOW - 1000 } }),
+  const result = await runCycle(deps, makeSettings(), makeMemory({
+    unarchivedAt: { gone: NOW - 1000 },
     prevArchived: new Set(['gone']),
-  })
+  }))
 
-  assert.deepEqual(result.state.unarchivedAt, {})
-  assert.equal(result.stateChanged, true)
+  assert.deepEqual(result.unarchivedAt, {})
+  assert.equal(result.unarchivedChanged, true)
 })
 
-test('stateChanged: 記録の追加も prune の変化もなければ false', async () => {
+test('unarchivedChanged: 7 日を超えた解除記録は prune で消える', async () => {
   const { deps } = makeDeps({
     sessions: [makeSession({ id: 'a', lastActivityAt: NOW })],
     archivedIds: [],
   })
 
-  const result = await runCycle(deps, makeConfig(), {
-    state: makeState({ unarchivedAt: { a: NOW - 1000 } }),
+  const result = await runCycle(deps, makeSettings(), makeMemory({
+    unarchivedAt: { a: NOW - UNARCHIVE_RETENTION_MS - 1 },
     prevArchived: new Set(),
+  }))
+
+  assert.deepEqual(result.unarchivedAt, {})
+  assert.equal(result.unarchivedChanged, true)
+})
+
+test('unarchivedChanged: 記録の追加も prune の変化もなければ false', async () => {
+  const { deps } = makeDeps({
+    sessions: [makeSession({ id: 'a', lastActivityAt: NOW })],
+    archivedIds: [],
   })
 
-  assert.deepEqual(result.state.unarchivedAt, { a: NOW - 1000 })
-  assert.equal(result.stateChanged, false)
+  const result = await runCycle(deps, makeSettings(), makeMemory({
+    unarchivedAt: { a: NOW - 1000 },
+    prevArchived: new Set(),
+  }))
+
+  assert.deepEqual(result.unarchivedAt, { a: NOW - 1000 })
+  assert.equal(result.unarchivedChanged, false)
 })
 
 test('listSessions の例外は握りつぶさず伝播する', async () => {
@@ -347,16 +342,17 @@ test('listSessions の例外は握りつぶさず伝播する', async () => {
     },
   })
 
-  await assert.rejects(
-    runCycle(deps, makeConfig(), { state: makeState(), prevArchived: undefined }),
-    /list failed/,
-  )
+  await assert.rejects(runCycle(deps, makeSettings(), makeMemory()), /list failed/)
 })
 
-test('入力 memory を変更しない (state と prevArchived を破壊しない)', async () => {
-  const memoryState = makeState({ baselineAt: NOW - 10 * MINUTE, unarchivedAt: { x: NOW - 5 * MINUTE } })
-  const memory: CycleMemory = { state: memoryState, prevArchived: new Set(['a', 'b']) }
-  const stateSnapshot = structuredClone(memoryState)
+test('入力 memory を変更しない (unarchivedAt と prevArchived を破壊しない)', async () => {
+  const memoryUnarchivedAt = { x: NOW - 5 * MINUTE }
+  const memory: CycleMemory = {
+    baselineAt: NOW - 10 * MINUTE,
+    unarchivedAt: memoryUnarchivedAt,
+    prevArchived: new Set(['a', 'b']),
+  }
+  const unarchivedSnapshot = structuredClone(memoryUnarchivedAt)
   const prevSnapshot = [...memory.prevArchived!]
 
   const { deps } = makeDeps({
@@ -364,14 +360,13 @@ test('入力 memory を変更しない (state と prevArchived を破壊しな�
     archivedIds: ['b'],
   })
 
-  const result = await runCycle(deps, makeConfig(), memory)
+  const result = await runCycle(deps, makeSettings(), memory)
 
-  assert.deepEqual(memoryState, stateSnapshot)
+  assert.deepEqual(memoryUnarchivedAt, unarchivedSnapshot)
   assert.deepEqual([...memory.prevArchived!], prevSnapshot)
-  assert.notEqual(result.state, memoryState)
+  assert.notEqual(result.unarchivedAt, memoryUnarchivedAt)
   assert.notEqual(result.prevArchived, memory.prevArchived)
   // 'a' は解除として記録される (prev の 'a' が archivedIds にない)。
   // 'x' は既知のセッションでないため prune で除去される。
-  assert.deepEqual(result.state.unarchivedAt, { a: NOW })
-  assert.equal(result.state.baselineAt, NOW - 10 * MINUTE)
+  assert.deepEqual(result.unarchivedAt, { a: NOW })
 })

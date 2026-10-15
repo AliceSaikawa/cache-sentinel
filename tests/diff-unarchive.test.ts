@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { detectUnarchived, recordUnarchived } from '../src/diff-unarchive.ts'
+import { detectUnarchived, pruneUnarchived, recordUnarchived } from '../src/diff-unarchive.ts'
 
 const NOW = 1_700_000_000_000
+const DAY = 24 * 60 * 60 * 1000
+const RETENTION = 7 * DAY
 
 test('初回 (prev が undefined) は差分比較せず空配列を返す (spec §5)', () => {
   assert.deepEqual(detectUnarchived(undefined, []), [])
@@ -89,4 +91,53 @@ test('recordUnarchived は入力を変更しない', () => {
   result.d = NOW
   assert.deepEqual(base, baseSnapshot)
   assert.deepEqual(ids, idsSnapshot)
+})
+
+// --- pruneUnarchived ---
+
+test('pruneUnarchived は now - at が保持期間を超えた記録を削除する', () => {
+  const base = { old: NOW - RETENTION - 1, keep: NOW - RETENTION + 1 }
+  assert.deepEqual(pruneUnarchived(base, NOW, RETENTION), { keep: NOW - RETENTION + 1 })
+})
+
+test('pruneUnarchived は境界ちょうど (now - at === retentionMs) を残す', () => {
+  const base = { boundary: NOW - RETENTION }
+  assert.deepEqual(pruneUnarchived(base, NOW, RETENTION), { boundary: NOW - RETENTION })
+})
+
+test('pruneUnarchived は knownIds に含まれない id を削除する', () => {
+  const base = { alive: NOW - 1000, gone: NOW - 1000 }
+  assert.deepEqual(pruneUnarchived(base, NOW, RETENTION, new Set(['alive'])), { alive: NOW - 1000 })
+})
+
+test('pruneUnarchived は古さと knownIds の両方で絞る', () => {
+  const base = { old: NOW - RETENTION - 1, gone: NOW, alive: NOW }
+  assert.deepEqual(pruneUnarchived(base, NOW, RETENTION, new Set(['alive', 'old'])), { alive: NOW })
+})
+
+test('pruneUnarchived は knownIds が undefined なら id で絞らない', () => {
+  const base = { a: NOW - 1000, b: NOW - 2000 }
+  assert.deepEqual(pruneUnarchived(base, NOW, RETENTION), { a: NOW - 1000, b: NOW - 2000 })
+})
+
+test('pruneUnarchived は空の記録でも新しいオブジェクトを返す', () => {
+  const base: Record<string, number> = {}
+  const result = pruneUnarchived(base, NOW, RETENTION)
+  assert.deepEqual(result, {})
+  assert.notEqual(result, base)
+})
+
+test('pruneUnarchived は入力を変更しない', () => {
+  const base = { old: NOW - RETENTION - 1, keep: NOW }
+  const known = new Set(['old', 'keep'])
+  const baseSnapshot = structuredClone(base)
+  const knownSnapshot = [...known]
+
+  const result = pruneUnarchived(base, NOW, RETENTION, known)
+
+  assert.deepEqual(base, baseSnapshot)
+  assert.deepEqual([...known], knownSnapshot)
+  assert.notEqual(result, base)
+  result.added = NOW
+  assert.deepEqual(base, baseSnapshot)
 })

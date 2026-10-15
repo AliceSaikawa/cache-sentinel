@@ -1,5 +1,5 @@
 /**
- * `archivedSessionIds` の差分から手動解除を検出する (spec §5)。
+ * `archivedSessionIds` の差分から手動解除を検出し、解除記録を管理する (spec §5・§7)。
  * 純粋関数。入力を変更せず、DSH の API を呼ばない。
  */
 
@@ -40,4 +40,29 @@ export function recordUnarchived(
     next[id] = now
   }
   return next
+}
+
+/**
+ * 不要になった解除記録を除いた新しいオブジェクトを返す (入力を変更しない)。
+ *
+ * - `now - at > retentionMs` の記録を削除する (境界ちょうどは残す。spec §7「7 日経過で掃除」)。
+ * - `knownIds` が与えられたら、そこに含まれない id も削除する (削除済みセッションの掃除)。
+ */
+export function pruneUnarchived(
+  unarchivedAt: Readonly<Record<string, number>>,
+  now: number,
+  retentionMs: number,
+  knownIds?: ReadonlySet<string>,
+): Record<string, number> {
+  const entries = Object.entries(unarchivedAt).filter(([id, at]) => {
+    if (now - at > retentionMs) {
+      return false
+    }
+    if (knownIds !== undefined && !knownIds.has(id)) {
+      return false
+    }
+    return true
+  })
+
+  return Object.fromEntries(entries)
 }
