@@ -129,3 +129,18 @@
   - **C2** 23:14:34 `/sentinel default` → state.json から `mode` が消え(baselineAt は残る)、「YAML の設定」に戻った。
 - 未検証(単体テストのみ): archive モードでの実アーカイブ(0.1.2 で検証済みのロジックを cycle の引数だけ変えて再利用)、
   both モードの 24 時間アーカイブ(C3)、再起動をまたいだモードの維持(state.json の保存は確認、読み込みは単体テスト)。
+
+---
+
+# UI 対応 (spec-ui.md v0.5) — 2026-10-15
+
+| # | タスク | 担当 | 状態 |
+|---|---|---|---|
+| T30 | 通知の文面と連続通知の抑制(notice.ts) | flash | 完了 |
+| T31 | 状態の計算(status.ts) | flash | 完了 |
+| T32 | 表示の判定(client/banner.ts) | flash | 完了 |
+| T33 | ブロック時の通知追加(block.ts)、状態の取得口(index.ts) | Claude | 完了 |
+| T34 | 公式 UI のクライアント半分(client/index.ts)、ビルド(scripts/build.ts)、0.5.0 | Claude | 完了 |
+| T35 | テスト(index / block / fetch-status) | flash + Claude | 完了(306 件) |
+| T36 | M3E: worktree `../m3e-wt-cache-sentinel`、ブランチ `feat/cache-sentinel-notice` | Claude | ローカルコミット 7ccfe9b。単体 1206 pass / skip 2、typecheck・e2e tsc・build・check:pack 成功、e2e(composer-height/mock/operations)44 pass |
+| T37 | 実機検証(D1〜D3, E1〜E3) | — | 未実施。DSH の再起動と、M3E のブランチ版の導入にユーザーの承認が必要 |

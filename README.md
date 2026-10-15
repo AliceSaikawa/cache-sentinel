@@ -3,7 +3,7 @@
 DSH (DeepSeek Harness) 用 Host プラグイン。プロンプトキャッシュが切れた(最後のモデル応答から一定時間が過ぎた)セッションへの
 誤送信で、履歴全体が通常のインプット料金で送られるのを防ぐ。
 
-状態: 0.4.0(モード切り替え)。仕様は [docs/spec.md](docs/spec.md)、アーカイブの詳細は [docs/archive-spec.md](docs/archive-spec.md)、
+状態: 0.5.0(モード切り替え + UI 表示)。UI 表示の仕様は [docs/spec-ui.md](docs/spec-ui.md)。仕様は [docs/spec.md](docs/spec.md)、アーカイブの詳細は [docs/archive-spec.md](docs/archive-spec.md)、
 調査は [docs/spike.md](docs/spike.md)。入力禁止は 0.3.0 で、アーカイブは 0.1.2 で実機検証済み。
 
 ## モード
@@ -17,6 +17,15 @@ DSH (DeepSeek Harness) 用 Host プラグイン。プロンプトキャッシュ
 GUI からは `/sentinel` で切り替える。`/sentinel` だけで現在の状態を表示する。
 - `/sentinel block` / `archive` / `both` / `off`: 切り替え(保存され、再起動後も維持)
 - `/sentinel default`: YAML の `mode` に戻す
+
+## UI での表示(0.5.0)
+- **ブロックしたとき**: 会話に「送信を止めました(最終応答から N 分…)。/unlock で次の 1 回を許可できます。」と、破棄された入力の文面が
+  コマンド結果の行として出る(公式 UI・M3E とも。Host 側だけで実現)。
+- **送る前**: 入力欄の上に「キャッシュ切れ(最終応答から N 分)。このまま送ると止められます。」と「次の 1 回を許可(/unlock)」のボタンが出る。
+  許可中は残り時間を出す。
+  - 公式 UI: このプラグインのクライアント半分(`lib/client.js`)が `conversation.input.dock` に出す。
+  - M3E: dsh-webui-m3e 側の対応が必要(ブランチ `feat/cache-sentinel-notice`)。
+- 状態の取得口: `GET /api/cache-sentinel.status?sessionId=<id>`(Connection の認証つき)。
 
 # 入力禁止(block / both)
 
