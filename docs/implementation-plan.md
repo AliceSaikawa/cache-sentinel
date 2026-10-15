@@ -20,3 +20,16 @@
 - 実装者は `AGENTS.md` を守る。範囲外のファイルを触らない。1 タスク 1 コミット。
 - T7/T9 は難所なので、レビューを厚くする(Claude が差分を確認)。T2〜T6 は仕様が固いので任せやすい。
 - 完了条件は「テスト緑 + 受入列を満たす」。テストを弱めて通すのは禁止。
+
+## OpenCode の実行方法 (確認済み 2026-10-15)
+- バイナリ: `/home/user/.opencode/bin/opencode` (v2.0.26)。**PATH には入っていない**ので絶対パスで呼ぶ。
+- 無料モデル: `opencode/deepseek-v4.1-flash-free`(`opencode models` で確認)。`opencode/deepseek-v4.1-flash` は無料版ではない可能性があるので使わない。
+- 起動には `~/.local/share/opencode/log` への書き込みが必要。DSH の workspace-write サンドボックスでは `EROFS` で失敗するため、
+  Claude から呼ぶときは権限昇格の承認が要る。ユーザーが自分の端末から実行してもよい。
+- 1 タスクの実行例(リポジトリ直下で):
+  ```sh
+  /home/user/.opencode/bin/opencode run --standalone -m opencode/deepseek-v4.1-flash-free \
+    --title "T2 config" "AGENTS.md と docs/spec.md §6、docs/implementation-plan.md の T2 を読み、T2 だけを実装してコミットせずに止まること"
+  ```
+- `--auto` は deny されない権限を自動承認する。`~/.config/opencode/opencode.jsonc` の deny ルール(rm -rf、git push --force 等)は効くが、
+  初回は付けずに挙動を見る。コミットは Claude の差分レビュー後に行う運用にする。
