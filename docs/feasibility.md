@@ -9,7 +9,7 @@ DSH の Host プラグインとして実現可能。対象は DSH のみ(Claude 
 | 最終更新時刻 | セッションログの各イベントが `time` (epoch ms) を持つ。`Session.ownEvents()` の末尾で取得可能 |
 | 定期チェック | `cordis-plugin-timer` / `ctx.setInterval` |
 | アーカイブ | `ctx.workspaceRegistry.archiveSession(id, { stopActivity })` |
-| 閲覧のみ | `ArchivedSessionGate` (dsh-api-session-controller) が `agent/pre-step` で アーカイブ済みセッションのステップを `blocked` にする。unarchive で解除 |
+| 送信の防止 | GUI ではアーカイブ済みセッションを開けない(2026-10-15 ユーザー確認)。加えて `ArchivedSessionGate` (dsh-api-session-controller) が `agent/pre-step` で アーカイブ済みセッションのステップを `blocked` にする。unarchive で解除 |
 | 実行中の扱い | 実行中ターン・ジョブ・サブエージェントがあると既定で `workspace/session-activity` が拒否する。実行中は対象外にするのが安全 |
 
 ## 設計メモ
