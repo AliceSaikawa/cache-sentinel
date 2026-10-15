@@ -7,12 +7,19 @@ import type { Config } from './config.ts'
 import { decideGate } from './gate.ts'
 import { LastResponseTracker, type TimedEvent } from './last-response.ts'
 import type { Logger } from './log.ts'
+import { buildBlockNotice, NoticeThrottle, type NoticeMessage } from './notice.ts'
+import { computeStatus, type StatusPayload } from './status.ts'
 import { decideUnlock, UnlockStore, unlockMessage } from './unlock.ts'
+
+/** 入力 0 件の拒否を通知する最短間隔(spec-ui.md §D)。 */
+export const NOTICE_INTERVAL_MS = 10 * 60_000
 
 /** Session のうち使う部分(dsh-session の Session)。 */
 export interface SessionLike {
   readonly id: string
   snapshotEvents(): readonly TimedEvent[]
+  /** dsh-session の Session.append。ブロック通知(command/run と command/done)の追加に使う。 */
+  append?(type: string, data: unknown): unknown
 }
 
 /** Agent のうち使う部分(dsh-agent の Agent)。 */
@@ -23,6 +30,8 @@ export interface AgentLike {
 /** `agent/pre-step` の payload のうち使う部分。 */
 export interface PreStepPayload {
   agent: AgentLike
+  /** このステップに入る予定の入力。拒否すると破棄される。 */
+  messages?: readonly NoticeMessage[]
   turn: number
   step: number
 }
@@ -41,6 +50,8 @@ export interface Sentinel {
   unlock(agent: AgentLike, inactiveText: string): CommandResult
   /** 最終応答からの経過分(切り捨て)。応答がなければ undefined。 */
   idleMinutesOf(session: SessionLike): number | undefined
+  /** 状態の取得口の中身(spec-ui.md §E1)。session が undefined なら読み込まれていないセッション。 */
+  statusOf(session: SessionLike | undefined, mode: string): StatusPayload
 }
 
 export type BlockSettings = Pick<Config, 'idleMinutes' | 'unlockTtlMinutes' | 'dryRun'>
@@ -60,6 +71,21 @@ export function createSentinel(
   const tracker = new LastResponseTracker((id) => (loading?.id === id ? loading.snapshotEvents() : undefined))
   const unlocks = new UnlockStore()
   const ttlMs = config.unlockTtlMinutes * 60_000
+  const throttle = new NoticeThrottle(NOTICE_INTERVAL_MS)
+  let noticeCounter = 0
+
+  /** 会話にブロック通知を出す(両 UI がコマンド結果として描画する)。失敗しても拒否は続ける。 */
+  const notify = (session: SessionLike, idleMinutes: number, messages: readonly NoticeMessage[]): void => {
+    const at = now()
+    if (session.append === undefined || !throttle.shouldNotify(session.id, at, messages.length > 0)) return
+    const commandId = `cache-sentinel-${session.id}-${at}-${++noticeCounter}`
+    try {
+      session.append('command/run', { commandId, name: 'cache-sentinel', args: '', source: { kind: 'user' } })
+      session.append('command/done', { commandId, kind: 'error', text: buildBlockNotice({ idleMinutes, messages }) })
+    } catch (error) {
+      log.warn(`ブロック通知を会話に追加できませんでした: ${session.id}: ${String(error)}`)
+    }
+  }
 
   const lastResponseOf = (session: SessionLike): number | undefined => {
     loading = session
@@ -103,6 +129,7 @@ export function createSentinel(
         return next()
       }
       log.info(`ブロックしました: ${where}。/unlock で次の送信を許可できます`)
+      notify(session, minutes, payload.messages ?? [])
       return { kind: 'reject' }
     },
 
@@ -130,6 +157,22 @@ export function createSentinel(
     idleMinutesOf(session) {
       const last = lastResponseOf(session)
       return last === undefined ? undefined : Math.floor(Math.max(0, now() - last) / 60_000)
+    },
+
+    statusOf(session, mode) {
+      const at = now()
+      unlocks.prune(at, ttlMs)
+      return computeStatus({
+        mode,
+        gate: isActive(),
+        known: session !== undefined,
+        now: at,
+        lastResponseAt: session === undefined ? undefined : lastResponseOf(session),
+        idleMinutes: config.idleMinutes,
+        grantedAt: session === undefined ? undefined : unlocks.grantedAt(session.id),
+        unlockTtlMinutes: config.unlockTtlMinutes,
+        dryRun: config.dryRun,
+      })
     },
   }
 }

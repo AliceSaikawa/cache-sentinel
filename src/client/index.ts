@@ -1,0 +1,128 @@
+/**
+ * cache-sentinel — 公式 Web UI のクライアント半分(spec-ui.md §E3)。
+ * 入力欄の上(`conversation.input.dock`)に、キャッシュ切れで入力禁止のときの警告と `/unlock` ボタンを出す。
+ * 判定は banner.ts の純粋関数に任せ、ここでは取得と描画だけを行う。React はシェルが提供する。
+ */
+import { createElement as h, useCallback, useEffect, useState } from 'react'
+import { bannerFor, parseStatus, statusUrl, UNLOCK_LABEL, type StatusLike } from './banner.ts'
+
+export const name = 'cache-sentinel-client'
+export const inject = ['slots', 'remote']
+
+/** 取得の間隔(spec-ui.md §E2)。 */
+export const POLL_MS = 30_000
+
+interface SlotsService {
+  inject(name: string, register: () => () => void): void
+  register(
+    options: { name: string; id: string; order: number; inject: (sessionId: string) => BannerProps },
+    component: (props: BannerProps) => unknown,
+  ): () => void
+}
+
+interface RemoteService {
+  commands: { execute(sessionId: string, line: string, attachments: readonly unknown[]): Promise<unknown> }
+}
+
+interface BannerProps {
+  sessionId: string
+  unlock: () => Promise<unknown>
+}
+
+export function apply(ctx: unknown): void {
+  const { slots, remote } = ctx as { slots: SlotsService; remote: RemoteService }
+  slots.inject('conversation.input.dock', () =>
+    slots.register(
+      {
+        name: 'conversation.input.dock',
+        id: 'cache-sentinel',
+        order: 5,
+        inject: (sessionId) => ({ sessionId, unlock: () => remote.commands.execute(sessionId, '/unlock', []) }),
+      },
+      Banner,
+    ),
+  )
+}
+
+/** 状態を 1 回取得する。失敗したら undefined(表示しない)。 */
+export async function fetchStatus(sessionId: string, base: string = document.baseURI): Promise<StatusLike | undefined> {
+  try {
+    const response = await fetch(statusUrl(base, sessionId), { credentials: 'same-origin', cache: 'no-store' })
+    if (!response.ok) return undefined
+    return parseStatus(await response.json())
+  } catch {
+    return undefined
+  }
+}
+
+const styles = {
+  box: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    margin: '0 0 8px',
+    padding: '8px 12px',
+    borderRadius: 12,
+    fontSize: 13,
+    lineHeight: '20px',
+    color: 'var(--dsw-alias-label-primary, inherit)',
+  },
+  warning: { background: 'rgba(245, 158, 11, 0.14)', border: '1px solid rgba(245, 158, 11, 0.45)' },
+  info: { background: 'rgba(59, 130, 246, 0.10)', border: '1px solid rgba(59, 130, 246, 0.35)' },
+  text: { flex: 1 },
+  button: {
+    flex: 'none',
+    padding: '4px 10px',
+    borderRadius: 8,
+    border: '1px solid currentColor',
+    background: 'transparent',
+    color: 'inherit',
+    fontSize: 12,
+    cursor: 'pointer',
+  },
+} as const
+
+function Banner({ sessionId, unlock }: BannerProps) {
+  const [status, setStatus] = useState<StatusLike | undefined>(undefined)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    setStatus(await fetchStatus(sessionId))
+  }, [sessionId])
+
+  useEffect(() => {
+    setStatus(undefined)
+    void load()
+    const timer = setInterval(() => void load(), POLL_MS)
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void load()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [load])
+
+  const banner = bannerFor(status, Date.now())
+  if (banner === undefined) return null
+
+  const onUnlock = async () => {
+    setBusy(true)
+    try {
+      await unlock()
+    } finally {
+      setBusy(false)
+      await load()
+    }
+  }
+
+  return h(
+    'div',
+    { role: 'status', 'data-testid': 'cache-sentinel-banner', style: { ...styles.box, ...styles[banner.tone] } },
+    h('span', { style: styles.text }, banner.text),
+    banner.tone === 'warning'
+      ? h('button', { type: 'button', style: styles.button, disabled: busy, onClick: () => void onUnlock() }, UNLOCK_LABEL)
+      : null,
+  )
+}

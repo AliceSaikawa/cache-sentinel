@@ -34,9 +34,13 @@ import {
 } from './mode.ts'
 import type { Mode } from './modes.ts'
 import { loadState, saveState, type State } from './state.ts'
+import type { StatusPayload } from './status.ts'
 
 export const name = 'cache-sentinel'
-export const inject = ['commands', 'workspaceRegistry', 'sessionPersistence', 'sessions', 'timer']
+export const inject = ['commands', 'workspaceRegistry', 'sessionPersistence', 'sessions', 'timer', 'connection']
+
+/** 送信前表示のための状態の取得口(spec-ui.md §E1)。 */
+export const STATUS_PATH = '/api/cache-sentinel.status'
 
 /** ctx のうち使う部分。 */
 export interface HostContext extends ArchiveServices {
@@ -55,6 +59,19 @@ export interface HostContext extends ArchiveServices {
   }
   interval(callback: () => void, delayMs: number): () => void
   logger: Logger
+  sessions: {
+    get(id: string): (SessionLike & { ownEvents(): readonly { time: number }[] }) | undefined
+  }
+  connection: {
+    fetch: {
+      register(route: {
+        path: string
+        methods: string[]
+        requestBody: 'buffered'
+        fetch: (request: Request) => Promise<Response>
+      }): unknown
+    }
+  }
 }
 
 /** 永続化と時計。テストで差し替える。 */
@@ -72,6 +89,8 @@ export interface Runtime {
   sentinel(agent: AgentLike, rawInput: string): Promise<CommandResult>
   /** アーカイブの 1 サイクル。モードがアーカイブしないときは何もしない。前のサイクル実行中なら飛ばす。 */
   tick(): Promise<void>
+  /** 状態の取得口の中身。session が undefined なら読み込まれていないセッション。 */
+  status(session: SessionLike | undefined): StatusPayload
 }
 
 export function createRuntime(
@@ -108,6 +127,7 @@ export function createRuntime(
     onPreStep: (payload, next) => block.onPreStep(payload, next),
     onSessionEvent: (session, event) => block.onSessionEvent(session, event),
     unlock: (agent) => block.unlock(agent, unlockInactiveMessage(current().mode)),
+    status: (session) => block.statusOf(session, current().mode),
 
     async sentinel(agent, rawInput) {
       const command = parseSentinelArgs(rawInput)
@@ -181,6 +201,18 @@ export function createRuntime(
   return runtime
 }
 
+/** 状態の取得口の応答を作る。sessionId が無ければ 400。 */
+export function statusResponse(request: Request, lookup: (sessionId: string) => StatusPayload): Response {
+  const sessionId = new URL(request.url).searchParams.get('sessionId')
+  if (sessionId === null || sessionId === '') {
+    return new Response('missing sessionId query parameter', { status: 400 })
+  }
+  return new Response(JSON.stringify(lookup(sessionId)), {
+    status: 200,
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+  })
+}
+
 export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void> {
   const config = parseConfig(rawConfig)
   const log = createLogger(ctx.logger, console)
@@ -210,6 +242,12 @@ export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void
     handler: ({ agent, rawInput }) => runtime.sentinel(agent, rawInput),
   })
   ctx.interval(() => void runtime.tick(), config.checkIntervalSeconds * 1000)
+  ctx.connection.fetch.register({
+    path: STATUS_PATH,
+    methods: ['GET'],
+    requestBody: 'buffered',
+    fetch: async (request) => statusResponse(request, (id) => runtime.status(ctx.sessions.get(id))),
+  })
 
   log.info(
     `開始 (モード ${runtime.mode()}, 入力禁止 ${config.idleMinutes} 分, both のアーカイブ ${config.archiveAfterMinutes} 分${config.dryRun ? ', dryRun' : ''})`,
