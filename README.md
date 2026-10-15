@@ -1,11 +1,24 @@
 # cache-sentinel
 
-DSH (DeepSeek Harness) 用 Host プラグイン。最後のモデル応答から一定時間(既定 60 分)が過ぎたセッションでは、
-**モデル / API への送信をすべて止める**(閲覧のみ)。プロンプトキャッシュが切れた後の誤送信で、
-履歴全体が通常のインプット料金で送られるのを防ぐ。承知のうえで送るときは `/unlock` を使う。
+DSH (DeepSeek Harness) 用 Host プラグイン。プロンプトキャッシュが切れた(最後のモデル応答から一定時間が過ぎた)セッションへの
+誤送信で、履歴全体が通常のインプット料金で送られるのを防ぐ。
 
-状態: 0.3.0(閲覧のみ方式)実装・実機検証済み。仕様は [docs/spec.md](docs/spec.md)、調査は [docs/spike.md](docs/spike.md)。
-旧アーカイブ方式は廃止([docs/legacy/archive-spec.md](docs/legacy/archive-spec.md))。
+状態: 0.4.0(モード切り替え)。仕様は [docs/spec.md](docs/spec.md)、アーカイブの詳細は [docs/archive-spec.md](docs/archive-spec.md)、
+調査は [docs/spike.md](docs/spike.md)。入力禁止は 0.3.0 で、アーカイブは 0.1.2 で実機検証済み。
+
+## モード
+| モード | 動作 |
+|---|---|
+| `block`(既定) | 最後の応答から 60 分で入力禁止(閲覧はできる)。`/unlock` で 1 回許可 |
+| `archive` | 最後の更新から 60 分でアーカイブ(サイドバーから消え、開けなくなる) |
+| `both` | 60 分で入力禁止、24 時間でアーカイブ |
+| `off` | 何もしない |
+
+GUI からは `/sentinel` で切り替える。`/sentinel` だけで現在の状態を表示する。
+- `/sentinel block` / `archive` / `both` / `off`: 切り替え(保存され、再起動後も維持)
+- `/sentinel default`: YAML の `mode` に戻す
+
+# 入力禁止(block / both)
 
 ## 動作
 - セッションは開けて読める。止まるのはモデルを呼ぶステップだけ。
@@ -28,15 +41,27 @@ systemctl --user restart deepseek-harness   # 新しいコードは再起動で�
 **注意**: 版を上げたら、有効化や設定変更より先に DSH を再起動すること。再起動前に無効→有効を切り替えても、
 プロセス内の古いモジュールが使われる(2026-10-15 にこれで旧版が動いた)。
 
+## アーカイブ(archive / both)
+- アーカイブが初めて有効になった時刻より前から止まっているセッションはアーカイブしない(`archiveExisting: true` で対象)。
+- ピン留め・サブエージェント・実行中の作業があるセッションは対象外。手動で解除すると、そこから同じ時間の猶予がある。
+- 最終更新時刻はセッションログの mtime(読み込み済みなら末尾イベントとの大きい方)。
+
 ## 設定 (profile の `cordis.patch.yml`)
 ```yaml
 - id: cache-sentinel
   config:
-    idleMinutes: 60       # 失効とみなす経過時間(分)
-    unlockTtlMinutes: 10  # /unlock の有効時間(分)
-    dryRun: false         # true で止めずにログだけ出す
+    mode: block               # block / archive / both / off(/sentinel で上書きできる)
+    idleMinutes: 60           # 入力禁止のしきい値。archive モードではアーカイブのしきい値
+    archiveAfterMinutes: 1440 # both モードのアーカイブのしきい値
+    unlockTtlMinutes: 10      # /unlock の有効時間
+    checkIntervalSeconds: 60  # アーカイブのチェック間隔
+    skipPinned: true
+    archiveExisting: false
+    maxPerCycle: 20
+    dryRun: false             # true で止めずアーカイブもせず、ログだけ出す
 ```
-設定の変更は再起動なしで反映される(プラグインが新しい設定で起動し直す。許可は消える)。
+設定の変更は再起動なしで反映される(プラグインが新しい設定で起動し直す。`/unlock` の許可は消える)。
+`/sentinel` で選んだモードは `$DSH_HOME/cache-sentinel/state.json` に保存され、YAML の `mode` より優先される。
 
 ## ログ
 `journalctl --user -u deepseek-harness | grep cache-sentinel`。ブロック・許可・起動を `[cache-sentinel]` 付きで出す。
