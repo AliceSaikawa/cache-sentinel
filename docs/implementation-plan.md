@@ -46,3 +46,9 @@
   プラグイン由来の例外ならスタックトレースが残るはずなので、可能性は低いと見ている。
 - プロファイルの `cordis.patch.yml` 末尾に検証用設定(dryRun / idleMinutes 1 / archiveExisting)を追記済み。**検証後に削除すること。**
 - 検証手順は README を参照(再起動 → journal で dryRun ログ確認 → dryRun 解除)。
+- 観察5 (20:28 再起動後, 0.1.2, dryRun / idleMinutes 1 / archiveExisting true / maxPerCycle 20):
+  - journal に `[cache-sentinel] 開始 ...` と `dryRun: アーカイブ対象 ...` が出た。ログ出力は解決。
+  - トップレベル 27 件のうち、アイドル最長の 20 件が毎サイクル同じ順で選ばれた(maxPerCycle の上限どおり)。
+  - アーカイブ済み(`c5e54134`)とピン留め(`30dd7b39` = この検証セッション)は対象外。サブエージェント(`<uuid>` 形式の id、120 件)も対象外。
+  - トップレベルの id は `session-<uuid>`、ログディレクトリ名も同じで、mtime インデックスは一致した(V1 を実データで確認)。
+- 未検証: dryRun を外した実アーカイブ、GUI への反映、手動解除後の猶予(A5)、patch の config 変更がライブで反映されるか。
