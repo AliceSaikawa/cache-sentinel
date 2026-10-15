@@ -1,0 +1,27 @@
+{
+  "name": "cache-sentinel",
+  "version": "0.1.0",
+  "description": "DSH host plugin that archives sessions left idle longer than a threshold.",
+  "type": "module",
+  "private": false,
+  "main": "lib/index.js",
+  "files": [
+    "lib/index.js",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --external:@deepseek-ai/* --outfile=lib/index.js",
+    "test": "node --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.4",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3"
+  }
+}

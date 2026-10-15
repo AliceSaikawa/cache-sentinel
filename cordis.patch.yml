@@ -1,0 +1,5 @@
+# Archive sessions that have been idle longer than the configured threshold.
+- insert:
+    - id: cache-sentinel
+      name: cache-sentinel
+      config: {}
