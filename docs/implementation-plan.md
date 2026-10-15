@@ -33,3 +33,13 @@
   ```
 - `--auto` は deny されない権限を自動承認する。`~/.config/opencode/opencode.jsonc` の deny ルール(rm -rf、git push --force 等)は効くが、
   初回は付けずに挙動を見る。コミットは Claude の差分レビュー後に行う運用にする。
+
+## T9 実機検証の記録 (2026-10-15)
+- 導入: `dsh plugin --profile web add file:.../cache-sentinel-0.1.1.tgz`。プロファイルのバックアップは
+  `~/.dsh/profiles/web/{package.json,pnpm-lock.yaml,cordis.patch.yml}.bak-before-20261015-cache-sentinel`。
+- 観察1: `patchReload: live` で、導入直後に **Host 側がライブで読み込まれた**(`~/.dsh/cache-sentinel/state.json` が作られた)。
+- 観察2: 差し替え後の新コード(0.1.1)は**再起動するまで反映されない**。patch の config 変更だけは反映される。
+- 観察3: `ctx.logger.info` は journal(`journalctl --user -u deepseek-harness`)に出ない。warn は出る見込み。
+  そのため dryRun 中は info を warn で出す(0.1.1)。
+- プロファイルの `cordis.patch.yml` 末尾に検証用設定(dryRun / idleMinutes 1 / archiveExisting)を追記済み。**検証後に削除すること。**
+- 検証手順は README を参照(再起動 → journal で dryRun ログ確認 → dryRun 解除)。

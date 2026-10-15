@@ -100,7 +100,11 @@ export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void
   const home = resolveHome()
   const stateFile = config.stateFile ?? join(home, 'cache-sentinel', 'state.json')
   const sessionsRoot = join(home, 'sessions')
-  const deps = createDeps(ctx, () => scanLogMtimes(sessionsRoot))
+  // dryRun は結果を確認するための設定なので、既定のログレベルでも見えるよう info を warn で出す。
+  const logger: CycleLogger = config.dryRun
+    ? { debug: (m) => ctx.logger.debug(m), info: (m) => ctx.logger.warn(m), warn: (m) => ctx.logger.warn(m) }
+    : ctx.logger
+  const deps = { ...createDeps(ctx, () => scanLogMtimes(sessionsRoot)), log: logger }
 
   const initial = await loadState(stateFile, deps.now())
   await saveState(stateFile, initial).catch((error) => {
@@ -121,7 +125,7 @@ export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void
         })
       }
       if (result.archived.length > 0) {
-        ctx.logger.info(`cache-sentinel: ${result.archived.length} 件をアーカイブしました`)
+        logger.info(`cache-sentinel: ${result.archived.length} 件をアーカイブしました`)
       }
     } catch (error) {
       ctx.logger.warn(`cache-sentinel: サイクルに失敗しました: ${String(error)}`)
@@ -131,7 +135,7 @@ export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void
   }
 
   ctx.interval(() => void tick(), config.checkIntervalSeconds * 1000)
-  ctx.logger.info(
+  logger.info(
     `cache-sentinel: 開始 (idle ${config.idleMinutes} 分, 間隔 ${config.checkIntervalSeconds} 秒${config.dryRun ? ', dryRun' : ''})`,
   )
   void tick()
