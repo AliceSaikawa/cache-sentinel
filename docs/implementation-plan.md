@@ -117,3 +117,15 @@
 | T25 | index.ts: ゲート + アーカイブサイクル + `/sentinel` + 永続化 | Claude | index.ts |
 | T26 | index のテスト | flash | tests/index.test.ts |
 | T27 | 実機検証(C1〜C4) | Claude | — |
+
+## T27 実機検証の記録 (0.4.0)
+- 23:13:40 再起動。`開始 (モード block, 入力禁止 60 分, both のアーカイブ 1440 分)`。state.json は無し(YAML の既定 block)。
+- 検証用セッション `session-fbdd89d1…`(最終応答から 81 分 = 失効)で:
+  - `/sentinel` → 「モード block(YAML の設定)… このセッション: 最終応答から 81 分」。
+  - 23:14:09 block で送信をブロック。
+  - **C1** 23:14:22 `/sentinel archive` → state.json に `mode: archive` と `baselineAt` を保存。`/unlock` は「入力禁止は無効です(モード: archive)」。
+    同じセッションへの送信が通り応答(Haiku 1 回)。アーカイブ集合は変化なし(基準時刻より前のセッションは対象外, C4)。
+  - 23:14:33 `/sentinel block` → `/unlock` は「最終応答から 0 分です…」(ゲートが再び有効)。
+  - **C2** 23:14:34 `/sentinel default` → state.json から `mode` が消え(baselineAt は残る)、「YAML の設定」に戻った。
+- 未検証(単体テストのみ): archive モードでの実アーカイブ(0.1.2 で検証済みのロジックを cycle の引数だけ変えて再利用)、
+  both モードの 24 時間アーカイブ(C3)、再起動をまたいだモードの維持(state.json の保存は確認、読み込みは単体テスト)。
