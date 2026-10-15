@@ -142,5 +142,5 @@
 | T33 | ブロック時の通知追加(block.ts)、状態の取得口(index.ts) | Claude | 完了 |
 | T34 | 公式 UI のクライアント半分(client/index.ts)、ビルド(scripts/build.ts)、0.5.0 | Claude | 完了 |
 | T35 | テスト(index / block / fetch-status) | flash + Claude | 完了(306 件) |
-| T36 | M3E: worktree `../m3e-wt-cache-sentinel`、ブランチ `feat/cache-sentinel-notice` | Claude | ローカルコミット 7ccfe9b。単体 1206 pass / skip 2、typecheck・e2e tsc・build・check:pack 成功、e2e(composer-height/mock/operations)44 pass |
+| T36 | M3E: worktree `../m3e-wt-cache-sentinel`、ブランチ `feat/cache-sentinel-notice` | Claude | Issue AliceSaikawa/dsh-webui-m3e#97 を作成。ローカルコミット 7ccfe9b(未 push)。単体 1206 pass / skip 2、typecheck・e2e tsc・build・check:pack 成功、e2e(composer-height/mock/operations)44 pass |
 | T37 | 実機検証(D1〜D3, E1〜E3) | — | 未実施。DSH の再起動と、M3E のブランチ版の導入にユーザーの承認が必要 |
