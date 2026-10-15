@@ -4,7 +4,13 @@
  * console にも書き、`journalctl --user -u deepseek-harness` で追えるようにする。
  * debug は量が多くなり得るので console には出さない。
  */
-import type { CycleLogger } from './cycle.ts'
+
+/** ロガーの最小インターフェース(ctx.logger と互換)。 */
+export interface Logger {
+  debug(message: string): void
+  info(message: string): void
+  warn(message: string): void
+}
 
 /** console のうち使う部分。テストで差し替えられるように引数で受け取る。 */
 export interface ConsoleSink {
@@ -19,7 +25,7 @@ export const LOG_PREFIX = '[cache-sentinel]'
  * @param base - DSH の ctx.logger(exporter があればそちらにも残る)。
  * @param sink - console 相当。
  */
-export function createLogger(base: CycleLogger, sink: ConsoleSink): CycleLogger {
+export function createLogger(base: Logger, sink: ConsoleSink): Logger {
   return {
     debug(message) {
       base.debug(message)

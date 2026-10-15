@@ -1,7 +1,7 @@
 {
   "name": "cache-sentinel",
-  "version": "0.1.2",
-  "description": "DSH host plugin that archives sessions left idle longer than a threshold.",
+  "version": "0.3.0",
+  "description": "DSH host plugin that blocks model requests from sessions whose prompt cache has likely expired (read-only until /unlock).",
   "type": "module",
   "private": false,
   "main": "lib/index.js",
