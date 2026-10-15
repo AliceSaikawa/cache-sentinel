@@ -1,46 +1,45 @@
 /**
- * cache-sentinel — Host half(閲覧のみ方式, spec v0.3)。
- * 最後のモデル応答から idleMinutes を超えたセッションでは、モデル / API への送信(ステップ)を拒否する。
- * `/unlock` で次の送信を 1 回だけ許可する。
- *
- * 判定は gate.ts / unlock.ts / last-response.ts の純粋な部品に任せ、ここでは DSH との接続だけを行う。
- * DSH 本体は依存ではないため、使うサービスの形は最小限をここに書き写す(根拠は docs/spike.md W1〜W5)。
+ * cache-sentinel — Host half(spec v0.4: モード切り替え)。
+ * - block: 最終応答から idleMinutes を超えたセッションの送信を拒否(src/block.ts)。`/unlock` で 1 回許可。
+ * - archive: idleMinutes を超えたセッションを自動アーカイブ(src/archive.ts, src/cycle.ts)。
+ * - both: idleMinutes で入力禁止、archiveAfterMinutes でアーカイブ。
+ * - off: 何もしない。
+ * 実効モードは `/sentinel` で変えられ、state.json に保存される(なければ YAML の mode)。
+ * DSH 本体は依存ではないため、使うサービスの形は最小限をここに書き写す(根拠は docs/spike.md)。
  */
+import { join } from 'node:path'
+import { scanLogMtimes } from './activity.ts'
+import { createDeps, resolveHome, type ArchiveServices } from './archive.ts'
+import {
+  createSentinel,
+  type AgentLike,
+  type CommandResult,
+  type PreStepDecision,
+  type PreStepPayload,
+  type SessionLike,
+} from './block.ts'
 import { parseConfig, type Config } from './config.ts'
-import { decideGate } from './gate.ts'
-import { LastResponseTracker, type TimedEvent } from './last-response.ts'
+import { runCycle, type CycleDeps } from './cycle.ts'
+import type { TimedEvent } from './last-response.ts'
 import { createLogger, type Logger } from './log.ts'
-import { decideUnlock, UnlockStore, unlockMessage } from './unlock.ts'
+import {
+  archives,
+  archiveThresholdMinutes,
+  blocks,
+  effectiveMode,
+  parseSentinelArgs,
+  statusMessage,
+  unlockInactiveMessage,
+  usageMessage,
+} from './mode.ts'
+import type { Mode } from './modes.ts'
+import { loadState, saveState, type State } from './state.ts'
 
 export const name = 'cache-sentinel'
-export const inject = ['commands']
-
-/** Session のうち使う部分(dsh-session の Session)。 */
-export interface SessionLike {
-  readonly id: string
-  snapshotEvents(): readonly TimedEvent[]
-}
-
-/** Agent のうち使う部分(dsh-agent の Agent)。 */
-export interface AgentLike {
-  readonly session: SessionLike
-}
-
-/** `agent/pre-step` の payload のうち使う部分。 */
-export interface PreStepPayload {
-  agent: AgentLike
-  turn: number
-  step: number
-}
-
-/** `agent/pre-step` の戻り値(dsh-agent の PreStepDecision)。中身は触らずに素通しする。 */
-export type PreStepDecision = { kind: 'reject' } | { kind: 'enter'; [key: string]: unknown }
-
-/** コマンドの戻り値(dsh-commands の CommandResult)。 */
-export type CommandResult = { kind: 'success'; text?: string } | { kind: 'error'; text: string }
+export const inject = ['commands', 'workspaceRegistry', 'sessionPersistence', 'sessions', 'timer']
 
 /** ctx のうち使う部分。 */
-export interface HostContext {
+export interface HostContext extends ArchiveServices {
   on(
     name: 'agent/pre-step',
     listener: (payload: PreStepPayload, next: () => Promise<PreStepDecision>) => Promise<PreStepDecision>,
@@ -51,111 +50,169 @@ export interface HostContext {
     register(definition: {
       name: string
       description: string
-      handler: (invocation: { agent: AgentLike }) => CommandResult | Promise<CommandResult>
+      handler: (invocation: { agent: AgentLike; rawInput: string }) => CommandResult | Promise<CommandResult>
     }): () => void
   }
+  interval(callback: () => void, delayMs: number): () => void
   logger: Logger
 }
 
-/** ゲートの部品をまとめたもの。テストでは ctx なしで直接呼ぶ。 */
-export interface Sentinel {
+/** 永続化と時計。テストで差し替える。 */
+export interface RuntimeIO {
+  now(): number
+  save(state: State): Promise<void>
+}
+
+/** モード・入力禁止・アーカイブをまとめた実行時の部品。ctx なしでテストできる。 */
+export interface Runtime {
+  mode(): Mode
   onPreStep(payload: PreStepPayload, next: () => Promise<PreStepDecision>): Promise<PreStepDecision>
   onSessionEvent(session: SessionLike, event: TimedEvent): void
   unlock(agent: AgentLike): CommandResult
+  sentinel(agent: AgentLike, rawInput: string): Promise<CommandResult>
+  /** アーカイブの 1 サイクル。モードがアーカイブしないときは何もしない。前のサイクル実行中なら飛ばす。 */
+  tick(): Promise<void>
 }
 
-/**
- * 設定・ロガー・時計からゲートの部品を作る。
- * 最終応答時刻は、そのとき手元にある Session オブジェクトのイベント列から初回だけ読み、以後は session/event で更新する。
- */
-export function createSentinel(config: Config, log: Logger, now: () => number = Date.now): Sentinel {
-  // tracker の load は、いま判定しているセッションのオブジェクトから読む(sessions サービスに依存しない)。
-  let loading: SessionLike | undefined
-  const tracker = new LastResponseTracker((id) => (loading?.id === id ? loading.snapshotEvents() : undefined))
-  const unlocks = new UnlockStore()
-  const ttlMs = config.unlockTtlMinutes * 60_000
+export function createRuntime(
+  config: Config,
+  initialState: State,
+  cycleDeps: CycleDeps,
+  log: Logger,
+  io: RuntimeIO,
+): Runtime {
+  let state = initialState
+  let prevArchived: ReadonlySet<string> | undefined
+  let running = false
+  let writes: Promise<void> = Promise.resolve()
 
-  const lastResponseOf = (session: SessionLike): number | undefined => {
-    loading = session
-    try {
-      return tracker.get(session.id)
-    } finally {
-      loading = undefined
-    }
+  const current = () => effectiveMode(state.mode, config.mode)
+  const persist = (): Promise<void> => {
+    const snapshot = state
+    writes = writes
+      .then(() => io.save(snapshot))
+      .catch((error) => log.warn(`state.json の保存に失敗しました: ${String(error)}`))
+    return writes
+  }
+  /** アーカイブが初めて有効になったら基準時刻を記録する(spec §B)。 */
+  const ensureBaseline = (mode: Mode): boolean => {
+    if (!archives(mode) || state.baselineAt !== undefined) return false
+    state = { ...state, baselineAt: io.now() }
+    return true
   }
 
-  return {
-    async onPreStep(payload, next) {
-      const session = payload.agent.session
-      let decision: ReturnType<typeof decideGate>
-      try {
-        const at = now()
-        unlocks.prune(at, ttlMs)
-        decision = decideGate({
-          now: at,
-          lastResponseAt: lastResponseOf(session),
+  const block = createSentinel(config, log, io.now, () => blocks(current().mode))
+
+  const runtime: Runtime = {
+    mode: () => current().mode,
+    onPreStep: (payload, next) => block.onPreStep(payload, next),
+    onSessionEvent: (session, event) => block.onSessionEvent(session, event),
+    unlock: (agent) => block.unlock(agent, unlockInactiveMessage(current().mode)),
+
+    async sentinel(agent, rawInput) {
+      const command = parseSentinelArgs(rawInput)
+      if (command.kind === 'invalid') return { kind: 'error', text: usageMessage() }
+      if (command.kind === 'set' || command.kind === 'default') {
+        const before = current().mode
+        if (command.kind === 'set') {
+          state = { ...state, mode: command.mode }
+        } else {
+          const { mode: _dropped, ...rest } = state
+          state = rest
+        }
+        const after = current().mode
+        ensureBaseline(after)
+        await persist()
+        log.info(`モードを変更しました: ${before} → ${after}(${command.kind === 'set' ? '/sentinel' : 'YAML に戻す'})`)
+        if (archives(after) && !archives(before)) {
+          prevArchived = undefined
+          void runtime.tick()
+        }
+      }
+      const { mode, source } = current()
+      return {
+        kind: 'success',
+        text: statusMessage({
+          mode,
+          source,
+          configMode: config.mode,
           idleMinutes: config.idleMinutes,
-          grantedAt: unlocks.grantedAt(session.id),
+          archiveAfterMinutes: config.archiveAfterMinutes,
           unlockTtlMinutes: config.unlockTtlMinutes,
-        })
+          dryRun: config.dryRun,
+          sessionIdleMinutes: block.idleMinutesOf(agent.session),
+        }),
+      }
+    },
+
+    async tick() {
+      if (running) return // 前のサイクルが終わっていなければ飛ばす
+      running = true
+      try {
+        const mode = current().mode
+        const threshold = archiveThresholdMinutes(mode, config)
+        if (threshold === undefined) {
+          prevArchived = undefined // 再び有効になったときの初回は解除の検出をしない
+          return
+        }
+        if (ensureBaseline(mode)) await persist()
+        const result = await runCycle(
+          cycleDeps,
+          {
+            thresholdMinutes: threshold,
+            skipPinned: config.skipPinned,
+            archiveExisting: config.archiveExisting,
+            maxPerCycle: config.maxPerCycle,
+            dryRun: config.dryRun,
+          },
+          { baselineAt: state.baselineAt ?? io.now(), unarchivedAt: state.unarchivedAt, prevArchived },
+        )
+        prevArchived = result.prevArchived
+        state = { ...state, unarchivedAt: result.unarchivedAt }
+        if (result.unarchivedChanged) await persist()
+        if (result.archived.length > 0) log.info(`${result.archived.length} 件をアーカイブしました`)
       } catch (error) {
-        // 判定できないときは作業を止めない(spec §7)。
-        log.warn(`判定に失敗したため通します: ${session.id}: ${String(error)}`)
-        return next()
+        log.warn(`アーカイブのサイクルに失敗しました: ${String(error)}`)
+      } finally {
+        running = false
       }
-
-      if (decision.kind === 'pass') {
-        if (decision.reason === 'unlocked') log.info(`/unlock の許可で通しました: ${session.id}`)
-        return next()
-      }
-
-      const minutes = Math.floor(decision.idleMs / 60_000)
-      const where = `${session.id} (最終応答から ${minutes} 分, turn ${payload.turn} step ${payload.step})`
-      if (config.dryRun) {
-        log.info(`dryRun: ブロック対象 ${where}`)
-        return next()
-      }
-      log.info(`ブロックしました: ${where}。/unlock で次の送信を許可できます`)
-      return { kind: 'reject' }
-    },
-
-    onSessionEvent(session, event) {
-      tracker.observe(session.id, event)
-    },
-
-    unlock(agent) {
-      const session = agent.session
-      const at = now()
-      const outcome = decideUnlock({
-        now: at,
-        lastResponseAt: lastResponseOf(session),
-        idleMinutes: config.idleMinutes,
-        unlockTtlMinutes: config.unlockTtlMinutes,
-      })
-      if (outcome.kind === 'granted') {
-        unlocks.grant(session.id, at)
-        log.info(`/unlock を許可しました: ${session.id} (最終応答から ${outcome.idleMinutes} 分)`)
-      }
-      return { kind: 'success', text: unlockMessage(outcome) }
     },
   }
+  return runtime
 }
 
-export function apply(ctx: HostContext, rawConfig?: unknown): void {
+export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void> {
   const config = parseConfig(rawConfig)
   const log = createLogger(ctx.logger, console)
-  const sentinel = createSentinel(config, log)
+  const home = resolveHome()
+  const stateFile = config.stateFile ?? join(home, 'cache-sentinel', 'state.json')
+  const sessionsRoot = join(home, 'sessions')
+
+  const runtime = createRuntime(
+    config,
+    await loadState(stateFile),
+    createDeps(ctx, () => scanLogMtimes(sessionsRoot), log),
+    log,
+    { now: Date.now, save: (state) => saveState(stateFile, state) },
+  )
 
   // 自動圧縮も同じ waterfall の中でモデルを呼ぶので、最も外側で判定する(docs/spike.md W2)。
-  ctx.on('agent/pre-step', (payload, next) => sentinel.onPreStep(payload, next), { prepend: true })
-  ctx.on('session/event', (session, event) => sentinel.onSessionEvent(session, event))
+  ctx.on('agent/pre-step', (payload, next) => runtime.onPreStep(payload, next), { prepend: true })
+  ctx.on('session/event', (session, event) => runtime.onSessionEvent(session, event))
   ctx.commands.register({
     name: 'unlock',
-    description: 'キャッシュ切れのセッションで次の送信を許可する(cache-sentinel)',
-    handler: ({ agent }) => sentinel.unlock(agent),
+    description: 'キャッシュ切れで入力禁止のセッションで、次の送信を許可する(cache-sentinel)',
+    handler: ({ agent }) => runtime.unlock(agent),
   })
+  ctx.commands.register({
+    name: 'sentinel',
+    description: 'cache-sentinel の状態表示とモード切り替え: /sentinel [block|archive|both|off|default]',
+    handler: ({ agent, rawInput }) => runtime.sentinel(agent, rawInput),
+  })
+  ctx.interval(() => void runtime.tick(), config.checkIntervalSeconds * 1000)
 
   log.info(
-    `開始 (閲覧のみ方式: 最終応答から ${config.idleMinutes} 分で送信を停止, /unlock 有効 ${config.unlockTtlMinutes} 分${config.dryRun ? ', dryRun' : ''})`,
+    `開始 (モード ${runtime.mode()}, 入力禁止 ${config.idleMinutes} 分, both のアーカイブ ${config.archiveAfterMinutes} 分${config.dryRun ? ', dryRun' : ''})`,
   )
+  void runtime.tick()
 }
