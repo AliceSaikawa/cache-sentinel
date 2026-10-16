@@ -60,7 +60,6 @@
 
 ### E4. m3e(dsh-webui-m3e)
 - m3e は他プラグインのクライアント半分を読み込まないため、m3e 本体に同じ表示を足す(別リポジトリ)。
-- worktree `../m3e-wt-cache-sentinel`(main から)・ブランチ `feat/cache-sentinel-notice` でローカルコミットまで。push / PR はしない(ユーザー承認待ち)。
 - 取得 URL は `new URL('../api/cache-sentinel.status?…', location.origin + import.meta.env.BASE_URL)`。
   cache-sentinel が入っていない DSH では 404 になるので、そのときは何も出さない。
 - 表示位置は入力欄の上(`Composer.tsx` の既存の `composer-notice` / `composer-error` と同じ並び)。ボタンは m3e のコマンド実行の経路で `/unlock` を送る。

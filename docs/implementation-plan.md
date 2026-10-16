@@ -1,5 +1,7 @@
 # 実装計画 (実装担当: OpenCode + deepseek-v4.1-flash / レビュー: Claude)
 
+> この文書は開発時の記録です。
+
 軽量モデルに任せるため、タスクを小さく切り、純粋関数を先に作る。DSH 依存部分は最後に薄く繋ぐ。
 各タスクは 1 コミット。テストは `node --test`(Node 組込み、依存追加なし)。
 
@@ -22,13 +24,13 @@
 - 完了条件は「テスト緑 + 受入列を満たす」。テストを弱めて通すのは禁止。
 
 ## OpenCode の実行方法 (確認済み 2026-10-15)
-- バイナリ: `/home/user/.opencode/bin/opencode` (v2.0.26)。**PATH には入っていない**ので絶対パスで呼ぶ。
+- バイナリ: `~/.opencode/bin/opencode` (v2.0.26)。**PATH には入っていない**のでフルパスで呼ぶ。
 - 無料モデル: `opencode/deepseek-v4.1-flash-free`(`opencode models` で確認)。`opencode/deepseek-v4.1-flash` は無料版ではない可能性があるので使わない。
 - 起動には `~/.local/share/opencode/log` への書き込みが必要。DSH の workspace-write サンドボックスでは `EROFS` で失敗するため、
   Claude から呼ぶときは権限昇格の承認が要る。ユーザーが自分の端末から実行してもよい。
 - 1 タスクの実行例(リポジトリ直下で):
   ```sh
-  /home/user/.opencode/bin/opencode run --standalone -m opencode/deepseek-v4.1-flash-free \
+  ~/.opencode/bin/opencode run --standalone -m opencode/deepseek-v4.1-flash-free \
     --title "T2 config" "AGENTS.md と docs/spec.md §6、docs/implementation-plan.md の T2 を読み、T2 だけを実装してコミットせずに止まること"
   ```
 - `--auto` は deny されない権限を自動承認する。`~/.config/opencode/opencode.jsonc` の deny ルール(rm -rf、git push --force 等)は効くが、
@@ -142,15 +144,15 @@
 | T33 | ブロック時の通知追加(block.ts)、状態の取得口(index.ts) | Claude | 完了 |
 | T34 | 公式 UI のクライアント半分(client/index.ts)、ビルド(scripts/build.ts)、0.5.0 | Claude | 完了 |
 | T35 | テスト(index / block / fetch-status) | flash + Claude | 完了(306 件) |
-| T36 | M3E: worktree `../m3e-wt-cache-sentinel`、ブランチ `feat/cache-sentinel-notice` | Claude | Issue AliceSaikawa/dsh-webui-m3e#97 を作成。ローカルコミット 7ccfe9b(未 push)。単体 1206 pass / skip 2、typecheck・e2e tsc・build・check:pack 成功、e2e(composer-height/mock/operations)44 pass |
-| T37 | 実機検証(D1〜D3, E1〜E3) | ユーザー | 一部実施(下記)。M3E のブランチ版は未導入 |
+| T36 | M3E(dsh-webui-m3e)側の送信前表示対応 | Claude | Issue AliceSaikawa/dsh-webui-m3e#97 を作成。単体 1206 pass / skip 2、typecheck・e2e tsc・build・check:pack 成功、e2e(composer-height/mock/operations)44 pass |
+| T37 | 実機検証(D1〜D3, E1〜E3) | ユーザー | 一部実施(下記)。M3E 側の送信前表示対応は未導入 |
 
-## T37 実機検証の記録 (0.5.0, 2026-10-16, ユーザーの実機 iPhone)
+## T37 実機検証の記録 (0.5.0, 2026-10-16)
 - 06:51:04 起動。`[cache-sentinel] 開始 (モード block, 入力禁止 60 分, both のアーカイブ 1440 分)`(patch に設定なし = 既定値)。
 - **E2(前半)** 公式 UI で失効したセッション(最終応答から 61 分)を開くと、入力欄の上に
   「キャッシュ切れ(最終応答から 61 分)。このまま送ると止められます。」とボタン「次の 1 回を許可(/unlock)」が出た(スクリーンショットで確認)。
 - 送信のブロック: 公式 UI・m3e の両方で、失効したセッションへの送信が止められた(ユーザー報告)。
-- m3e: 表示は出ない。m3e は main のままでブランチ `feat/cache-sentinel-notice` を入れていないため想定どおり。
+- m3e: 表示は出ない。m3e は main のままで送信前表示の対応を入れていないため想定どおり。
   表示がなくても送信の邪魔にならないこと(取得失敗時に何も出さない)は確認できた。
 - 未検証: E2 後半(ボタンで許可され「許可中」に変わる)、D1 の会話行と破棄された文面、D2(再読み込み)、D3(連続通知の抑制)、
-  E1(未認証の拒否・sessionId なしの 400)、E3(m3e ブランチ版での表示)。
+  E1(未認証の拒否・sessionId なしの 400)、E3(m3e での送信前表示)。

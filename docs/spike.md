@@ -1,12 +1,14 @@
 # T0 spike 結果 (2026-10-15, DSH 0.2.0-rc.2)
 
-調査対象: `/home/user/.local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/`(以下 `$PK`)。
+> この文書は開発時の記録です。
+
+調査対象: `<DSH のインストール先>/node_modules/@deepseek-ai/`(以下 `$PK`)。
 コードは書いていない。実機動作は T9 で確認する(ここは型定義・実装読解と実ファイル確認まで)。
 
 ## U1: Host プラグインの形と inject するサービス — 確定
 - 形: `export const name`, `export const inject = [...]`, `export function apply(ctx, config)`、
   設定は `export const Config = z.object({...})`(`import z from '@deepseek-ai/schemastery'`)。
-  根拠: `$PK/dsh-hooks-claude-code/lib/index.js:2,114-121,405`、既存例 `/home/user/dev/dsh-webui-m3e/src/host/index.ts:21-22,110`。
+  根拠: `$PK/dsh-hooks-claude-code/lib/index.js:2,114-121,405`、既存例 `dsh-webui-m3e/src/host/index.ts:21-22,110`。
 - 使うサービス(`ctx.<name>`):
   | inject 名 | 型 | 根拠 |
   |---|---|---|
@@ -69,7 +71,7 @@
 
 # 閲覧のみ方式の調査 (2026-10-15, DSH 0.2.0-rc.2) — spec v0.3 の根拠
 
-`$PK` = `/home/user/.local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai`
+`$PK` = `<DSH のインストール先>/node_modules/@deepseek-ai`
 
 ## W1: ステップを止める口 — `agent/pre-step`(確定)
 - 型: `$PK/dsh-agent/lib/types/runtime-types.d.ts:304-310`。waterfall。`{ kind: 'reject' }` を返すと拒否。
