@@ -1,159 +1,161 @@
 # cache-sentinel
 
-DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古いセッションへのうっかり送信を防ぐプラグインです。
+English | [日本語](README.ja.md) | [简体中文](README.zh-CN.md)
 
-最後の応答から時間が経ったセッションにそのまま続きを送ると、溜まった会話履歴のすべてにキャッシュなしの通常料金がかかります。`cache-sentinel` は最終応答からの経過時間を監視し、古いセッションへの送信を自動で止めたり、セッション自体を自動でアーカイブしたりして誤送信を防ぎます。
+A plugin for DeepSeek Harness (DSH) that prevents accidental sends to old sessions whose prompt cache has expired.
 
-## 概要
+If you send a follow-up message to a session where some time has passed since the last response, the entire accumulated conversation history is billed at the regular uncached input rate. `cache-sentinel` monitors the time elapsed since the last response and prevents accidental sends by automatically blocking sends to old sessions or automatically archiving the sessions themselves.
 
-プロンプトキャッシュの有効時間が過ぎたセッションに対して、次の 2 つの方法で誤送信を防げます。
+## Overview
 
-- **入力禁止（`block`）**：セッションは開いて読めるまま、モデルを呼ぶ送信だけを止めます。続けて送りたいときは、入力欄の上のボタンか `/unlock` コマンドで次の 1 回だけを許可できます。
-- **自動アーカイブ（`archive`）**：しばらく更新のないセッションを自動でアーカイブし、サイドバーから隠して開けないようにします。
+For sessions where the prompt cache lifetime has passed, this plugin prevents accidental sends in two ways:
 
-両方を組み合わせる `both` モード（60 分で入力禁止、24 時間でアーカイブ）や、一時的に機能を止める `off` モードへ、チャットの `/sentinel` コマンドからいつでも切り替えられます。
+- **Input blocking (`block`)**: Keeps the session open and readable while stopping only sends that call the model. When you want to continue sending, you can allow just the next send using the button above the input box or the `/unlock` command.
+- **Auto-archiving (`archive`)**: Automatically archives sessions that have not been updated for a while, hiding them from the sidebar so they cannot be opened.
 
-## 導入
+You can switch at any time from the chat `/sentinel` command to `both` mode, which combines both (input blocking after 60 minutes, archiving after 24 hours), or `off` mode, which temporarily disables the feature.
 
-1. 次の 1 コマンドを実行します。
+## Installation
+
+1. Run the following single command.
 
    ```sh
    dsh plugin --profile web add https://github.com/AliceSaikawa/cache-sentinel/releases/latest/download/cache-sentinel.tgz
    ```
 
-   `web` は例です。実際に使っているプロファイル名を指定してください。
+   `web` is an example. Specify the profile name you actually use.
 
-2. DSH を再起動します。
+2. Restart DSH.
 
-   プラグインのコードは DSH の起動時に読み込まれるため、追加後は再起動が必要です。
+   Plugin code is loaded when DSH starts, so a restart is required after adding it.
 
-   systemd のユーザーサービスとして動かしている場合の例：
+   Example when running DSH as a systemd user service:
 
    ```sh
    systemctl --user restart deepseek-harness
    ```
 
-### 確認・更新・削除
+### Check, Update, and Remove
 
-- **導入の確認**：
+- **Check installation**:
   ```sh
   dsh plugin --profile web list cache-sentinel --depth 0
   ```
-- **更新**：導入と同じコマンドをもう一度実行して最新版を追加し直したあと、**必ず DSH を再起動**してください（再起動する前に無効→有効を切り替えても、プロセス内の古いコードがそのまま使われます）。
-- **削除**：
+- **Update**: Run the same installation command again to re-add the latest version, and then **be sure to restart DSH** (toggling the plugin off and on before restarting will continue to use the old code loaded in the process).
+- **Remove**:
   ```sh
   dsh plugin --profile web remove cache-sentinel
   ```
 
-## 使い方
+## Usage
 
-### モード
+### Modes
 
-| モード | 動作 |
+| Mode | Behavior |
 |---|---|
-| `block`（既定） | 最終応答から `idleMinutes`（既定 60 分）を超えたら入力禁止（閲覧は可能）。`/unlock` で次の 1 回を許可 |
-| `archive` | 最終更新から `idleMinutes`（既定 60 分）を超えたら自動アーカイブ（サイドバーから非表示になり開けなくなる） |
-| `both` | 最終応答から `idleMinutes`（既定 60 分）で入力禁止、最終更新から `archiveAfterMinutes`（既定 1440 分 = 24 時間）で自動アーカイブ |
-| `off` | 入力禁止もアーカイブも行わない（`/sentinel` と `/unlock` コマンドは実行可能） |
+| `block` (default) | Blocks input once `idleMinutes` (default: 60 minutes) have passed since the last response (viewing is still allowed). `/unlock` allows the next single send |
+| `archive` | Automatically archives the session once `idleMinutes` (default: 60 minutes) have passed since the last update (hidden from the sidebar and cannot be opened) |
+| `both` | Blocks input `idleMinutes` (default: 60 minutes) after the last response, and automatically archives `archiveAfterMinutes` (default: 1440 minutes = 24 hours) after the last update |
+| `off` | Neither blocks input nor archives sessions (`/sentinel` and `/unlock` commands remain available) |
 
-### `/sentinel` コマンド
+### `/sentinel` Command
 
-チャットの入力欄から、現在の状態の確認とモードの切り替えができます。
+You can check the current status and switch modes from the chat input box.
 
-- `/sentinel`：現在の実効モードとその出どころ（`/sentinel` で設定 / YAML の設定）、しきい値、このセッションの最終応答からの経過分、`dryRun` の状態を表示します。
-- `/sentinel block` | `archive` | `both` | `off`：実効モードを切り替えます。`$DSH_HOME/cache-sentinel/state.json` に保存され、DSH 再起動後も維持されます（YAML の `mode` より優先）。
-- `/sentinel default`：`/sentinel` で保存したモードを消去し、YAML の `mode` 設定に戻します。
+- `/sentinel`: Shows the current effective mode and its source (set via `/sentinel` / set in YAML), thresholds, elapsed minutes since the last response in this session, and `dryRun` status.
+- `/sentinel block` | `archive` | `both` | `off`: Switches the effective mode. It is saved to `$DSH_HOME/cache-sentinel/state.json` and preserved across DSH restarts (takes precedence over `mode` in YAML).
+- `/sentinel default`: Clears the mode saved via `/sentinel` and reverts to the `mode` setting in YAML.
 
-### `/unlock` コマンド
+### `/unlock` Command
 
-- 入力禁止（`block` / `both` モード）で失効しているセッションで `/unlock` を実行すると、次の送信を 1 回だけ許可します。許可は `unlockTtlMinutes`（既定 10 分）で失効します。
-- 許可後にモデル応答（`step/end`）が 1 回返ると許可は役目を終え、その後は通常の判定に戻ります（応答直後は失効していないため、そのまま会話を続けられます）。
-- まだ失効していないセッションや、モデル応答がまだないセッションで実行した場合は、許可を記録せず現在の経過時間や状態を表示します。
+- Running `/unlock` in an expired session under input blocking (`block` / `both` mode) allows just the next send once. The permission expires after `unlockTtlMinutes` (default: 10 minutes).
+- Once a model response (`step/end`) returns after unlocking, the permission has served its purpose and normal checks resume (since the session is not expired right after a response, you can continue the conversation naturally).
+- Running it in a session that has not expired yet or has no model response yet does not record a permission and only displays the current elapsed time or status.
 
-## UI での表示
+## UI Display
 
-- **ブロックしたとき（公式 Web UI・M3E 共通）**：
-  - 会話内に「送信を止めました(最終応答から N 分。キャッシュが切れている可能性が高いため)。」「/unlock で次の 1 回を許可できます。」と、破棄された入力テキスト（1 件あたり 2000 文字まで）がコマンド結果の行として表示されます。
-  - 入力メッセージが 0 件のステップ（自動継続など）が連続で拒否された場合は、同じセッションで 10 分に 1 回まで通知を抑制します。
-- **送信前のバナー表示**：
-  - **公式 Web UI**：クライアントプラグイン（`lib/client.js`）が入力欄の上（`conversation.input.dock`）に状態バナーを表示します。
-    - 失効中：「キャッシュ切れ(最終応答から N 分)。このまま送ると止められます。」と「次の 1 回を許可(/unlock)」ボタン
-    - 許可中：「次の送信を許可中(キャッシュなしの料金になります)。あと M 分」
-  - **M3E（`dsh-webui-m3e`）**：ブロック時の会話行は表示されますが、M3E は他プラグインのクライアントバンドルを読み込まないため、送信前のバナー表示には M3E 側の対応が必要です。
-- **状態の取得 API**：
-  - `GET /api/cache-sentinel.status?sessionId=<id>`（Connection の認証つき）でセッションの状態 JSON を返します。
+- **When a send is blocked (both the official Web UI and M3E)**:
+  - The conversation displays "送信を止めました(最終応答から N 分。キャッシュが切れている可能性が高いため)。" ("Send blocked (N minutes since the last response, as the cache has likely expired).") and "/unlock で次の 1 回を許可できます。" ("You can allow the next single send with /unlock."), along with the discarded input text (up to 2000 characters per message), as a command result line.
+  - When steps with 0 input messages (such as automatic continuation) are rejected consecutively, notifications are throttled to at most once every 10 minutes per session.
+- **Pre-send banner display**:
+  - **Official Web UI**: The client plugin (`lib/client.js`) displays a status banner above the input box (`conversation.input.dock`).
+    - Expired: "キャッシュ切れ(最終応答から N 分)。このまま送ると止められます。" ("Cache expired (N minutes since the last response). Sending now will be blocked.") and the "次の 1 回を許可(/unlock)" ("Allow the next single send (/unlock)") button
+    - Unlocked: "次の送信を許可中(キャッシュなしの料金になります)。あと M 分" ("Next send allowed (uncached input rates will apply). M min left")
+  - **M3E (`dsh-webui-m3e`)**: The conversation line when blocked is displayed, but because M3E does not load client bundles from other plugins, displaying the pre-send banner requires support on the M3E side.
+- **Status API**:
+  - `GET /api/cache-sentinel.status?sessionId=<id>` (with Connection authentication) returns the session status JSON.
 
-## 設定
+## Configuration
 
-プロファイルの `cordis.patch.yml` で設定を変更できます。省略した項目には既定値が使われます。
+You can change the settings in your profile's `cordis.patch.yml`. Omitted keys use their default values.
 
 ```yaml
 - id: cache-sentinel
   config:
-    mode: block               # block / archive / both / off (/sentinel で上書き可能)
-    idleMinutes: 60           # 入力禁止のしきい値(分)。archive モードではアーカイブのしきい値(分)
-    archiveAfterMinutes: 1440 # both モードでのアーカイブのしきい値(分)
-    unlockTtlMinutes: 10      # /unlock の有効時間(分)
-    checkIntervalSeconds: 60  # アーカイブのチェック間隔(秒、10 以上)
-    skipPinned: true          # ピン留めされたセッションをアーカイブしない
-    archiveExisting: false    # 初回有効化より前に止まっていたセッションもアーカイブ対象にする
-    maxPerCycle: 20           # 1 サイクルあたりの最大アーカイブ件数
-    dryRun: false             # true のときブロックもアーカイブも行わずログのみ出力
-    # stateFile: /path/to/state.json # 永続状態ファイルのパス(既定: $DSH_HOME/cache-sentinel/state.json)
+    mode: block               # block / archive / both / off (can be overridden with /sentinel)
+    idleMinutes: 60           # threshold for input blocking (min); in archive mode, the archive threshold (min)
+    archiveAfterMinutes: 1440 # archive threshold in both mode (min)
+    unlockTtlMinutes: 10      # how long /unlock stays valid (min)
+    checkIntervalSeconds: 60  # archive check interval (sec, 10 or more)
+    skipPinned: true          # do not archive pinned sessions
+    archiveExisting: false    # also archive sessions that have been idle since before archiving was first enabled
+    maxPerCycle: 20           # maximum sessions to archive per cycle
+    dryRun: false             # when true, neither block nor archive, only log
+    # stateFile: /path/to/state.json # path to persistent state file (default: $DSH_HOME/cache-sentinel/state.json)
 ```
 
-- `cordis.patch.yml` の設定変更は DSH の再起動なしで反映されます（プラグインが新しい設定で再適用され、メモリ上の `/unlock` の許可は消えます）。
-- 未知のキーや型・範囲が不正な値を指定した場合はエラーになります。
+- Changes to `cordis.patch.yml` take effect without restarting DSH (the plugin is re-applied with the new settings, and in-memory `/unlock` permissions are cleared).
+- Specifying unknown keys or values with invalid types or ranges results in an error.
 
-## 仕組み
+## How It Works
 
-### 入力禁止（`block` / `both` モード）
+### Input Blocking (`block` / `both` Mode)
 
-- `agent/pre-step` フックの先頭（`prepend: true`）でステップ開始前に判定します。自動圧縮（`dsh-compaction-basic`）より先に判定するため、キャッシュ切れのセッションでは自動圧縮によるモデル呼び出しも発生しません。
-- 止める対象はメッセージの出どころを問いません。ユーザーの送信、リマインダー、ゴールの自動継続、バックグラウンドジョブの完了通知、サブエージェントの継続、長いツール実行後の次ステップすべてが対象です。
-- 経過時間はセッションの最後の `step/end` イベント時刻（フォーク元から引き継いだ履歴を含む）から計算します。まだモデル応答がない新規セッションや、経過時間が `idleMinutes` 分ちょうど以内の場合はそのまま通します。
-- ステップを拒否したときは API リクエストが発生せず、料金はかかりません。**そのステップに入る予定だった送信メッセージは破棄される**ため、解除後に再入力してください（破棄されたテキストは会話内のブロック通知に表示されます）。
+- Evaluates before a step starts at the head of the `agent/pre-step` hook (`prepend: true`). Because it runs before automatic compaction (`dsh-compaction-basic`), model calls for automatic compaction do not occur in expired sessions either.
+- Blocks steps regardless of where the message came from: user sends, reminders, automatic goal continuation, background job completion notifications, subagent continuation, and next steps after long tool executions are all covered.
+- Elapsed time is calculated from the timestamp of the session's last `step/end` event (including history inherited from a fork). New sessions with no model response yet, or sessions whose elapsed time is within `idleMinutes` minutes (inclusive), are allowed through.
+- When a step is rejected, no API request is made and no charges are incurred. **The outgoing message that was about to enter that step is discarded**, so please type it again after unlocking (the discarded text is shown in the block notice inside the conversation).
 
-### アーカイブ（`archive` / `both` モード）
+### Archiving (`archive` / `both` Mode)
 
-- プラグイン有効化時と `checkIntervalSeconds` 秒ごとにセッション一覧をチェックします。
-- 最終更新時刻（`lastActivityAt`）は、セッションログファイル（`session.v*.jsonl[.zstd]`）の `mtime`、ロード済みセッションの末尾イベント時刻、手動でアーカイブ解除された時刻の最大値（いずれもなければ作成時刻）です。
-- アーカイブモードが初めて有効になった基準時刻（`baselineAt`）より前に更新が止まっていたセッションは、既定ではアーカイブしません（`archiveExisting: true` で対象になります）。
-- ピン留めされたセッション（`skipPinned: true` の場合）、サブエージェントのセッション、実行中の作業（ターン・ジョブ・サブエージェント・リマインダー）があるセッションは対象外です。
-- 手動でアーカイブを解除したセッションは、解除が検出された時点から再びしきい値分の猶予があります。
+- Checks the session list when the plugin is enabled and every `checkIntervalSeconds` seconds thereafter.
+- The last update time (`lastActivityAt`) is the maximum of the session log file (`session.v*.jsonl[.zstd]`) `mtime`, the timestamp of the last event in a loaded session, and the timestamp when the session was manually unarchived (or the creation time if none are available).
+- Sessions that stopped updating before the baseline timestamp (`baselineAt`) when an archiving mode was first enabled are not archived by default (set `archiveExisting: true` to include them).
+- Pinned sessions (when `skipPinned: true`), subagent sessions, and sessions with running work (turns, jobs, subagents, reminders) are excluded.
+- Sessions that are manually unarchived get another grace period of the threshold duration from the time the unarchiving is detected.
 
-## 制限
+## Limitations
 
-- M3E では他プラグインのクライアントバンドルを読み込まないため、送信前のバナー表示には M3E 側の対応が必要です（ブロックしたときの会話内の通知は Host 側のみで表示されます）。
-- サブエージェントのセッションでは GUI から `/unlock` を実行できません。
-- タイトル自動生成（`session-title-first-prompt-llm`）は最初の送信時に独立してモデルを呼び出すためゲートの対象外です（新規セッションやフォークの初回のみで、送信されるのは最初のメッセージだけです）。
-- プロンプトキャッシュの実際の寿命はプロバイダとリクエスト内容によって決まります。本プラグインは経過時間だけで判定する近似です。
+- Because M3E does not load client bundles from other plugins, displaying the pre-send banner requires support on the M3E side (the in-conversation notice when blocked is displayed by the Host side alone).
+- In subagent sessions, `/unlock` cannot be executed from the GUI.
+- Automatic title generation (`session-title-first-prompt-llm`) calls the model independently on the first send and is outside the gate (only on the first send in new sessions or forks, and only the first message is sent).
+- The actual prompt cache lifetime depends on the provider and request contents. This plugin is an approximation based solely on elapsed time.
 
-## トラブルシューティング
+## Troubleshooting
 
-### プラグインを更新したあとは DSH を再起動する
+### Restart DSH After Updating the Plugin
 
-`dsh plugin --profile web add ...` で新しい版を追加し直したあとは、プラグインの有効化や設定変更を行う前に **DSH を再起動**してください。再起動せずにプラグインの無効→有効を切り替えても、プロセス内に残っている古いモジュールが再利用されます。
+After re-adding a new version with `dsh plugin --profile web add ...`, **restart DSH** before enabling the plugin or changing its settings. Toggling the plugin off and on without restarting will reuse the old module remaining in the process.
 
-### ログの見方
+### Viewing Logs
 
-起動・ブロック・`/unlock` の許可・モード変更・アーカイブは `[cache-sentinel]` プレフィックス付きで標準出力 / 標準エラーおよび DSH のロガーに出力されます。
+Startup, blocks, `/unlock` grants, mode changes, and archiving are output with a `[cache-sentinel]` prefix to stdout / stderr and the DSH logger.
 
-systemd のユーザーサービス（`deepseek-harness`）として動かしている場合のログ確認例：
+Example for checking logs when running DSH as a systemd user service (`deepseek-harness`):
 
 ```sh
 journalctl --user -u deepseek-harness | grep cache-sentinel
 ```
 
-## 開発
+## Development
 
 ```sh
-pnpm test          # 単体テスト (node --test)
-pnpm run typecheck # 型チェック (tsc --noEmit)
-pnpm run build     # ビルド (lib/index.js, lib/client.js)
+pnpm test          # unit tests (node --test)
+pnpm run typecheck # type check (tsc --noEmit)
+pnpm run build     # build (lib/index.js, lib/client.js)
 ```
 
-ソースからビルドしてローカルの `.tgz` を導入する場合：
+To build from source and install a local `.tgz`:
 
 ```sh
 git clone https://github.com/AliceSaikawa/cache-sentinel.git
@@ -164,25 +166,25 @@ pnpm pack
 dsh plugin --profile web add file:$PWD/cache-sentinel-$(node -p "require('./package.json').version").tgz
 ```
 
-`scripts/dsh-rpc.mjs` は、DSH を `deepseek-harness` ユーザー systemd サービスとして動かしている環境で、journal の起動 URL からトークンを取得して DSH の RPC を直接呼ぶ検証用スクリプトです。
+`scripts/dsh-rpc.mjs` is a verification script for environments running DSH as the `deepseek-harness` user systemd service; it retrieves the token from the startup URL in the journal and calls DSH RPCs directly.
 
 ```sh
 node scripts/dsh-rpc.mjs workspace/unarchiveSession '{"sessionId":"..."}'
 node scripts/dsh-rpc.mjs --args commands/execute '{"agentId":"<sessionId>","line":"/unlock","submittedAttachments":[]}'
 ```
 
-設計・仕様・調査の詳細は [docs/](docs/README.md) を参照してください。
+See [docs/](docs/README.md) for design, specifications, and investigation details (all documents under `docs/` are in Japanese).
 
-- [docs/spec.md](docs/spec.md)：全体仕様（モード切り替え・入力禁止）
-- [docs/spec-ui.md](docs/spec-ui.md)：UI 表示・ステータス API 仕様
-- [docs/archive-spec.md](docs/archive-spec.md)：アーカイブモード仕様
-- [docs/spike.md](docs/spike.md)：DSH 本体 API の調査記録
+- [docs/spec.md](docs/spec.md): Overall specification (mode switching and input blocking)
+- [docs/spec-ui.md](docs/spec-ui.md): UI display and status API specification
+- [docs/archive-spec.md](docs/archive-spec.md): Archive mode specification
+- [docs/spike.md](docs/spike.md): Investigation notes on DSH internal APIs
 
-## 対応バージョン・動作環境
+## Supported Versions and Environment
 
-- **DeepSeek Harness（DSH）**：**0.2.0-rc.2**（このバージョンで調査・動作確認しています。根拠は [docs/spike.md](docs/spike.md) を参照してください）
-- **Node.js / pnpm**：通常の DSH CLI はプラグイン追加時に `PATH` 上の `pnpm` を使用します（Releases の `.tgz` から導入する場合、利用者側でのソース取得・ビルドは不要です）
+- **DeepSeek Harness (DSH)**: **0.2.0-rc.2** (investigated and verified on this version; see [docs/spike.md](docs/spike.md) for details)
+- **Node.js / pnpm**: The standard DSH CLI uses `pnpm` on `PATH` when adding plugins (when installing from the Releases `.tgz`, fetching the source or building on the user side is not required)
 
-## ライセンス
+## License
 
-MIT License — [LICENSE](LICENSE) を参照してください。
+MIT License — see [LICENSE](LICENSE).
