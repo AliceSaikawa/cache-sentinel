@@ -175,6 +175,12 @@ node scripts/dsh-rpc.mjs workspace/unarchiveSession '{"sessionId":"..."}'
 node scripts/dsh-rpc.mjs --args commands/execute '{"agentId":"<sessionId>","line":"/unlock","submittedAttachments":[]}'
 ```
 
+`scripts/dsh-compat.ts` checks whether the `@deepseek-ai/*` packages that cache-sentinel uses have changed between DSH versions. When a new DSH version is released, it compares each package against the verified version and reports `same` (no change, so it should stay compatible) / `diff` (files changed, so a human should read the diff) / `missing` (fetch failed).
+
+```sh
+node scripts/dsh-compat.ts /var/tmp/dsh-compat 0.2.1-rc.1 0.2.1-rc.2
+```
+
 See [docs/](docs/README.md) for design, specifications, and investigation details (all documents under `docs/` are in Japanese).
 
 - [docs/spec.md](docs/spec.md): Overall specification (mode switching and input blocking)
@@ -184,7 +190,10 @@ See [docs/](docs/README.md) for design, specifications, and investigation detail
 
 ## Supported Versions and Environment
 
-- **DeepSeek Harness (DSH)**: **0.2.0-rc.2** (investigated and verified on this version; see [docs/spike.md](docs/spike.md) for details)
+- **DeepSeek Harness (DSH)**: **0.2.0-rc.2 to 0.2.1-rc.1** (including 0.2.1-alpha.1 to alpha.5)
+  - **0.2.0-rc.2**: verified on a real environment.
+  - **0.2.1-alpha.1 to alpha.5 and 0.2.1-rc.1**: the type definitions and implementations of the APIs that cache-sentinel uses were compared against 0.2.0-rc.2 (2026-10-17). Not verified on a real environment. In 0.2.1-rc.1, the status API returns 403 for connections other than the browser (in that case the pre-send banner is simply not shown).
+  - See [docs/spike.md](docs/spike.md) for the evidence. To check a newer version, run [scripts/dsh-compat.ts](scripts/dsh-compat.ts).
 - **Node.js / pnpm**: The standard DSH CLI uses `pnpm` on `PATH` when adding plugins (when installing from the Releases `.tgz`, fetching the source or building on the user side is not required)
 
 ## License

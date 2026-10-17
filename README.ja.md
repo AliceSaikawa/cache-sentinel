@@ -175,6 +175,12 @@ node scripts/dsh-rpc.mjs workspace/unarchiveSession '{"sessionId":"..."}'
 node scripts/dsh-rpc.mjs --args commands/execute '{"agentId":"<sessionId>","line":"/unlock","submittedAttachments":[]}'
 ```
 
+`scripts/dsh-compat.ts` は、cache-sentinel が使う `@deepseek-ai/*` の各パッケージが DSH の版によって変わったかを調べます。新しい DSH の版が出たら、確認済みの版と各パッケージを比べ、`same`（変更なし。互換の見込み）/ `diff`（変更あり。人が差分を読む）/ `missing`（取得失敗）を報告します。
+
+```sh
+node scripts/dsh-compat.ts /var/tmp/dsh-compat 0.2.1-rc.1 0.2.1-rc.2
+```
+
 設計・仕様・調査の詳細は [docs/](docs/README.md) を参照してください。
 
 - [docs/spec.md](docs/spec.md)：全体仕様（モード切り替え・入力禁止）
@@ -184,7 +190,10 @@ node scripts/dsh-rpc.mjs --args commands/execute '{"agentId":"<sessionId>","line
 
 ## 対応バージョン・動作環境
 
-- **DeepSeek Harness（DSH）**：**0.2.0-rc.2**（このバージョンで調査・動作確認しています。根拠は [docs/spike.md](docs/spike.md) を参照してください）
+- **DeepSeek Harness（DSH）**：**0.2.0-rc.2 〜 0.2.1-rc.1**（0.2.1-alpha.1〜alpha.5 を含む）
+  - **0.2.0-rc.2**：実機で確認済み。
+  - **0.2.1-alpha.1〜alpha.5・0.2.1-rc.1**：cache-sentinel が使う API の型定義と実装を 0.2.0-rc.2 と比べて確認（2026-10-17）。実機は未確認。0.2.1-rc.1 では、ブラウザ以外の接続元からの状態取得 API が 403 になる（その接続元では送信前バナーが出ないだけ）。
+  - 根拠は [docs/spike.md](docs/spike.md) を参照。新しい版が出たときの確認は [scripts/dsh-compat.ts](scripts/dsh-compat.ts) で行えます。
 - **Node.js / pnpm**：通常の DSH CLI はプラグイン追加時に `PATH` 上の `pnpm` を使用します（Releases の `.tgz` から導入する場合、利用者側でのソース取得・ビルドは不要です）
 
 ## ライセンス
