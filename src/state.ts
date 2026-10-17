@@ -131,15 +131,14 @@ export function tempPathFor(target: string, unique: string, p: typeof path = pat
  * state.json を atomic に書く (同じディレクトリの一時ファイル → rename)。
  * 親ディレクトリは mkdir -p する。JSON は整形し末尾に改行を付ける。
  * rename に失敗したら一時ファイルを消して例外を伝える。
- * `p` は保存先の区切り文字に合わせた path 実装 (既定は実行環境の OS に従う)。
  */
-export async function saveState(filePath: string, state: State, p: typeof path = path): Promise<void> {
-  const dir = p.dirname(filePath)
+export async function saveState(filePath: string, state: State): Promise<void> {
+  const dir = path.dirname(filePath)
   await mkdir(dir, { recursive: true })
 
   const json = `${JSON.stringify(state, null, 2)}\n`
   const unique = `${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}`
-  const tmp = tempPathFor(filePath, unique, p)
+  const tmp = tempPathFor(filePath, unique)
 
   await writeFile(tmp, json, 'utf8')
   try {

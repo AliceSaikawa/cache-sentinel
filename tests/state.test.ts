@@ -318,17 +318,6 @@ test('saveState は書き込み前に親ディレクトリを確実に用意す�
   assert.equal(await exists(path), true)
 })
 
-test('saveState は注入した path 実装でも同じディレクトリに書き rename で置き換える', async (t) => {
-  const dir = await tmpDir(t)
-  const path = join(dir, 'state.json')
-  const state: State = { version: 2, mode: 'off', unarchivedAt: {} }
-
-  await saveState(path, state, posix)
-
-  assert.deepEqual(await readdir(dir), ['state.json'])
-  assert.deepEqual(await loadState(path), state)
-})
-
 // --- tempPathFor (Issue #6: Windows 形式のパスでも保存できること) ---
 
 test('tempPathFor は win32 の保存先と同じディレクトリに一時ファイルを作る (Issue #6)', () => {
