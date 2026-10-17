@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, posix, win32 } from 'node:path'
 import test from 'node:test'
 
 import {
@@ -11,6 +11,7 @@ import {
   loadState,
   parseState,
   saveState,
+  tempPathFor,
 } from '../src/state.ts'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -315,4 +316,37 @@ test('saveState は書き込み前に親ディレクトリを確実に用意す�
 
   await saveState(path, EMPTY)
   assert.equal(await exists(path), true)
+})
+
+// --- tempPathFor (Issue #6: Windows 形式のパスでも保存できること) ---
+
+test('tempPathFor は win32 の保存先と同じディレクトリに一時ファイルを作る (Issue #6)', () => {
+  const target = 'C:\\Users\\u\\.dsh\\cache-sentinel\\state.json'
+  const tmp = tempPathFor(target, '1234.5.ab', win32)
+
+  assert.equal(tmp, 'C:\\Users\\u\\.dsh\\cache-sentinel\\state.json.1234.5.ab.tmp')
+  assert.equal(win32.dirname(tmp), 'C:\\Users\\u\\.dsh\\cache-sentinel')
+
+  const name = win32.basename(tmp)
+  assert.ok(name.startsWith('state.json.'))
+  assert.ok(name.endsWith('.tmp'))
+  // 修正前は target 全体がファイル名扱いになり、名前にドライブの `:` が残った。
+  assert.ok(!name.includes(':'))
+})
+
+test('tempPathFor は posix の保存先と同じディレクトリに一時ファイルを作る', () => {
+  const target = '/home/u/.dsh/cache-sentinel/state.json'
+  const tmp = tempPathFor(target, '1234.5.ab', posix)
+
+  assert.equal(tmp, '/home/u/.dsh/cache-sentinel/state.json.1234.5.ab.tmp')
+  assert.equal(posix.dirname(tmp), '/home/u/.dsh/cache-sentinel')
+
+  const name = posix.basename(tmp)
+  assert.ok(name.startsWith('state.json.'))
+  assert.ok(name.endsWith('.tmp'))
+})
+
+test('tempPathFor は親ディレクトリを持たない保存先でも現在のディレクトリに作る', () => {
+  assert.equal(tempPathFor('state.json', 'x', posix), 'state.json.x.tmp')
+  assert.equal(tempPathFor('state.json', 'x', win32), 'state.json.x.tmp')
 })
