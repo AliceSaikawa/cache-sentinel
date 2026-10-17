@@ -1,6 +1,6 @@
 # cache-sentinel 仕様 v0.5 — UI 対応(公式 UI と m3e)
 
-[spec.md](spec.md)(v0.4)に次の 2 つを足す。
+[spec.md](spec.md)(v0.4)に次の 3 つを足す。
 
 ## D. ブロックしたことを会話に表示する(Host のみ、両 UI 共通)
 - 入力禁止でステップを拒否したとき(dryRun ではないとき)、そのセッションに次のペアを `session.append` で追加する。
@@ -24,6 +24,7 @@
 - 連続通知の抑制: 入力メッセージが 0 件のステップ(ターン途中や自動の継続)を拒否したときは、同じセッションで直近 10 分以内に通知していれば追加しない。
   入力メッセージがあれば毎回通知する(破棄した文面を見せるため)。
 - 追加に失敗しても拒否はそのまま行う(warn ログのみ)。
+- 文面の言語は §F に従う(ここに書く例は日本語)。
 
 ## E. 送信前に「入力禁止中」を表示する
 ### E1. 状態の取得口(Host)
@@ -41,19 +42,20 @@
   - sessionId がない・空なら 400。
 - 判定は純粋関数 `computeStatus` に置く(block.ts の判定と同じ部品を使う)。
 
-### E2. 表示の規則(両 UI 共通、純粋関数 `bannerFor(status, now)`)
+### E2. 表示の規則(両 UI 共通、純粋関数 `bannerFor(status, now, locale)`)
 | 条件 | 表示 |
 |---|---|
 | gate かつ state = stale かつ dryRun でない | 警告:「キャッシュ切れ(最終応答から {N} 分)。このまま送ると止められます。」+ ボタン「次の 1 回を許可(/unlock)」 |
 | gate かつ state = unlocked | 情報:「次の送信を許可中(キャッシュなしの料金になります)。あと {M} 分」 |
 | それ以外 | 何も出さない |
+- 文面の言語は §F に従う(表に書く例は日本語)。
 - 取得は表示中のセッションについて、表示開始時・30 秒ごと・画面が前面に戻ったとき・ボタン操作の後。失敗したら何も出さない(送信の邪魔をしない)。
 - ボタンは `/unlock` コマンドを実行し、結果の文面は通常のコマンド結果として会話に出る。
 
 ### E3. 公式 UI(cache-sentinel のクライアント半分)
 - `package.json` の `exports['./client']` = `lib/client.js`、`dsh.client = { platform: 'web', immediately: false, inject: ['@deepseek-ai/dsh-client-ui-conversation'] }`。
-- `ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name, id: 'cache-sentinel', order: 5, inject: (sessionId) => ({ sessionId, unlock }) }, Banner))`。
-  `unlock` は `ctx.remote.commands.execute(sessionId, '/unlock', [])`。
+- `ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name, id: 'cache-sentinel', order: 5, inject: (sessionId) => ({ sessionId, locale, unlock }) }, Banner))`。
+  `unlock` は `ctx.remote.commands.execute(sessionId, '/unlock', [])`。`locale` は `navigator.languages` から決める(§F)。
 - 取得 URL は `new URL('api/cache-sentinel.status?sessionId=…', document.baseURI)`。
 - ビルド: esbuild で CJS(browser)にし、`window.__ModuleLoader__.load({ id, factory })` で包む(dsh-webui-m3e と同じ)。React は外部(シェルが提供)。
   React の型のために依存を足さず、使う API だけの最小の型宣言を置く。
@@ -64,6 +66,19 @@
   cache-sentinel が入っていない DSH では 404 になるので、そのときは何も出さない。
 - 表示位置は入力欄の上(`Composer.tsx` の既存の `composer-notice` / `composer-error` と同じ並び)。ボタンは m3e のコマンド実行の経路で `/unlock` を送る。
 
+## F. 表示の言語
+- 対応する言語は `en` / `ja` / `zh-CN`。判定できない場合と未対応の言語は `en`。
+- 判定は純粋関数 `resolveLocale(candidates)`(`src/i18n.ts`)で行う。
+  - 候補を先頭から見て、空文字・`C`・`POSIX` は飛ばし、最初に見つかったもので決める。
+  - `.` 以降(エンコーディング)と `@` 以降(修飾子)を落とし、`_` を `-` とみなす(`ja_JP.UTF-8` → `ja`)。
+  - `ja` で始まる → `ja`、`zh` で始まる → `zh-CN`、`en` で始まる → `en`、それ以外 → `en`。
+- Host 側の候補は `LC_ALL`、`LC_MESSAGES`、`LANG`、`Intl.DateTimeFormat().resolvedOptions().locale` の順。`apply` で 1 回決める(環境の読み取りは `src/index.ts` が行い、純粋関数には候補だけを渡す)。
+- クライアント側の候補は `navigator.languages`(無ければ `navigator.language`)。`src/client/index.ts` が読み取り、`bannerFor` / `unlockLabel` に渡す。DSH には言語を持つ `ctx.locale`(`dsh-client-locale`)もあるが、クライアントの inject を増やさないため今回は使わない。
+- 会話に書き込むブロック通知は、書き込んだ時点の Host の言語で書く(後から言語が変わっても、その行は書き直さない)。
+- 翻訳の対象は、ブロック通知(`src/notice.ts`)、バナーとボタン(`src/client/banner.ts`)、`/sentinel`・`/unlock` の出力(`src/mode.ts`・`src/unlock.ts`)、設定エラー(`src/config.ts`)、コマンドの説明(`src/index.ts`)。
+- ログ出力(`[cache-sentinel]` の行)は翻訳しない(日本語のまま)。
+- 文言は言語ごとのカタログ `src/messages.ts` にまとめ、3 言語が同じキーと同じ引数を持つことを型(`Record<Locale, Messages>`)で保証する。
+
 ## 受入基準
 - D1: ブロックすると、そのセッションの会話に「送信を止めました…」の行が出る(公式・m3e)。破棄された文面が含まれる。
 - D2: 保存されたセッションを再読み込みしても壊れない(合成した command イベントが検証を通る)。
@@ -71,3 +86,4 @@
 - E1: status が仕様どおりの JSON を返す。未認証は拒否される。sessionId なしは 400。
 - E2: 公式 UI で、失効したセッションを開くと入力欄の上に警告とボタンが出る。ボタンで許可され、表示が「許可中」に変わる。
 - E3: m3e で同じ表示が出る。cache-sentinel が無い DSH では何も出ない。
+- F1: 通知・バナー・コマンド出力・設定エラーが 3 言語それぞれでその言語になり、未対応の言語では英語になる。

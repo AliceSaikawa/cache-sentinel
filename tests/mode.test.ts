@@ -128,7 +128,7 @@ const BASE: StatusInput = {
 
 test('statusMessage: config の block(応答なし)', () => {
   assert.equal(
-    statusMessage(BASE),
+    statusMessage(BASE, 'ja'),
     [
       'cache-sentinel: モード block(YAML の設定)',
       '最終応答から 60 分で入力禁止(/unlock で解除、10 分有効)',
@@ -139,7 +139,7 @@ test('statusMessage: config の block(応答なし)', () => {
 
 test('statusMessage: command の block は出どころと既定モードを出す', () => {
   assert.equal(
-    statusMessage({ ...BASE, mode: 'block', source: 'command', configMode: 'off' }),
+    statusMessage({ ...BASE, mode: 'block', source: 'command', configMode: 'off' }, 'ja'),
     [
       'cache-sentinel: モード block(/sentinel で設定、YAML の既定は off)',
       '最終応答から 60 分で入力禁止(/unlock で解除、10 分有効)',
@@ -150,7 +150,7 @@ test('statusMessage: command の block は出どころと既定モードを出�
 
 test('statusMessage: archive の説明', () => {
   assert.equal(
-    statusMessage({ ...BASE, mode: 'archive' }),
+    statusMessage({ ...BASE, mode: 'archive' }, 'ja'),
     [
       'cache-sentinel: モード archive(YAML の設定)',
       '最終応答から 60 分でアーカイブ',
@@ -161,7 +161,7 @@ test('statusMessage: archive の説明', () => {
 
 test('statusMessage: both の説明は両方のしきい値を出す', () => {
   assert.equal(
-    statusMessage({ ...BASE, mode: 'both' }),
+    statusMessage({ ...BASE, mode: 'both' }, 'ja'),
     [
       'cache-sentinel: モード both(YAML の設定)',
       '60 分で入力禁止、1440 分でアーカイブ',
@@ -172,7 +172,7 @@ test('statusMessage: both の説明は両方のしきい値を出す', () => {
 
 test('statusMessage: off の説明', () => {
   assert.equal(
-    statusMessage({ ...BASE, mode: 'off' }),
+    statusMessage({ ...BASE, mode: 'off' }, 'ja'),
     [
       'cache-sentinel: モード off(YAML の設定)',
       '停止中(何もしません)',
@@ -183,7 +183,7 @@ test('statusMessage: off の説明', () => {
 
 test('statusMessage: このセッションの経過分を出す', () => {
   assert.equal(
-    statusMessage({ ...BASE, sessionIdleMinutes: 5 }),
+    statusMessage({ ...BASE, sessionIdleMinutes: 5 }, 'ja'),
     [
       'cache-sentinel: モード block(YAML の設定)',
       '最終応答から 60 分で入力禁止(/unlock で解除、10 分有効)',
@@ -194,7 +194,7 @@ test('statusMessage: このセッションの経過分を出す', () => {
 
 test('statusMessage: 経過 0 分も数値として出す(undefined と区別する)', () => {
   assert.equal(
-    statusMessage({ ...BASE, sessionIdleMinutes: 0 }),
+    statusMessage({ ...BASE, sessionIdleMinutes: 0 }, 'ja'),
     [
       'cache-sentinel: モード block(YAML の設定)',
       '最終応答から 60 分で入力禁止(/unlock で解除、10 分有効)',
@@ -205,7 +205,7 @@ test('statusMessage: 経過 0 分も数値として出す(undefined と区別す
 
 test('statusMessage: dryRun が真なら 4 行目を足す', () => {
   assert.equal(
-    statusMessage({ ...BASE, dryRun: true }),
+    statusMessage({ ...BASE, dryRun: true }, 'ja'),
     [
       'cache-sentinel: モード block(YAML の設定)',
       '最終応答から 60 分で入力禁止(/unlock で解除、10 分有効)',
@@ -216,19 +216,53 @@ test('statusMessage: dryRun が真なら 4 行目を足す', () => {
 })
 
 test('statusMessage: dryRun が偽なら 4 行目を足さない', () => {
-  assert.equal(statusMessage({ ...BASE, dryRun: false }).split('\n').length, 3)
+  assert.equal(statusMessage({ ...BASE, dryRun: false }, 'ja').split('\n').length, 3)
 })
 
 // ---- usageMessage / unlockInactiveMessage ----
 
 test('usageMessage: 使い方の文面', () => {
   assert.equal(
-    usageMessage(),
+    usageMessage('ja'),
     '使い方: /sentinel [block|archive|both|off|default](引数なしで状態表示)',
   )
 })
 
 test('unlockInactiveMessage: モードごとの文面', () => {
-  assert.equal(unlockInactiveMessage('off'), '入力禁止は無効です(モード: off)')
-  assert.equal(unlockInactiveMessage('archive'), '入力禁止は無効です(モード: archive)')
+  assert.equal(unlockInactiveMessage('off', 'ja'), '入力禁止は無効です(モード: off)')
+  assert.equal(unlockInactiveMessage('archive', 'ja'), '入力禁止は無効です(モード: archive)')
+})
+
+// --- 表示言語 (spec-ui v0.5 §F) ---
+
+test('statusMessage: 英語の文面', () => {
+  assert.equal(
+    statusMessage({ ...BASE, mode: 'both' }, 'en'),
+    [
+      'cache-sentinel: mode both (from YAML)',
+      'Input blocked after 60 minutes, archived after 1440 minutes',
+      'This session: no model response yet',
+    ].join('\n'),
+  )
+})
+
+test('statusMessage: 中国語の文面', () => {
+  assert.equal(
+    statusMessage({ ...BASE, mode: 'both' }, 'zh-CN'),
+    [
+      'cache-sentinel：模式 both(YAML 设置)',
+      '60 分钟后禁止输入，1440 分钟后归档',
+      '本会话：尚无模型响应',
+    ].join('\n'),
+  )
+})
+
+test('usageMessage / unlockInactiveMessage: 英語・中国語の文面', () => {
+  assert.equal(
+    usageMessage('en'),
+    'Usage: /sentinel [block|archive|both|off|default] (with no argument, show status)',
+  )
+  assert.equal(usageMessage('zh-CN'), '用法：/sentinel [block|archive|both|off|default](不带参数时显示状态)')
+  assert.equal(unlockInactiveMessage('off', 'en'), 'Input blocking is disabled (mode: off)')
+  assert.equal(unlockInactiveMessage('off', 'zh-CN'), '输入禁止已禁用(模式：off)')
 })

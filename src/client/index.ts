@@ -4,7 +4,8 @@
  * 判定は banner.ts の純粋関数に任せ、ここでは取得と描画だけを行う。React はシェルが提供する。
  */
 import { createElement as h, useCallback, useEffect, useState } from 'react'
-import { bannerFor, UNLOCK_LABEL, type StatusLike } from './banner.ts'
+import { resolveLocale, type Locale } from '../i18n.ts'
+import { bannerFor, unlockLabel, type StatusLike } from './banner.ts'
 import { fetchStatus } from './fetch-status.ts'
 
 export const name = 'cache-sentinel-client'
@@ -27,18 +28,32 @@ interface RemoteService {
 
 interface BannerProps {
   sessionId: string
+  locale: Locale
   unlock: () => Promise<unknown>
+}
+
+/**
+ * ブラウザの言語候補から表示言語を決める (spec-ui.md §F)。
+ * `navigator.languages`(優先順)を使い、無ければ `navigator.language`。
+ */
+function browserLocale(): Locale {
+  return resolveLocale(navigator.languages.length > 0 ? navigator.languages : [navigator.language])
 }
 
 export function apply(ctx: unknown): void {
   const { slots, remote } = ctx as { slots: SlotsService; remote: RemoteService }
+  const locale = browserLocale()
   slots.inject('conversation.input.dock', () =>
     slots.register(
       {
         name: 'conversation.input.dock',
         id: 'cache-sentinel',
         order: 5,
-        inject: (sessionId) => ({ sessionId, unlock: () => remote.commands.execute(sessionId, '/unlock', []) }),
+        inject: (sessionId) => ({
+          sessionId,
+          locale,
+          unlock: () => remote.commands.execute(sessionId, '/unlock', []),
+        }),
       },
       Banner,
     ),
@@ -72,7 +87,7 @@ const styles = {
   },
 } as const
 
-function Banner({ sessionId, unlock }: BannerProps) {
+function Banner({ sessionId, locale, unlock }: BannerProps) {
   const [status, setStatus] = useState<StatusLike | undefined>(undefined)
   const [busy, setBusy] = useState(false)
 
@@ -94,7 +109,7 @@ function Banner({ sessionId, unlock }: BannerProps) {
     }
   }, [load])
 
-  const banner = bannerFor(status, Date.now())
+  const banner = bannerFor(status, Date.now(), locale)
   if (banner === undefined) return null
 
   const onUnlock = async () => {
@@ -112,7 +127,7 @@ function Banner({ sessionId, unlock }: BannerProps) {
     { role: 'status', 'data-testid': 'cache-sentinel-banner', style: { ...styles.box, ...styles[banner.tone] } },
     h('span', { style: styles.text }, banner.text),
     banner.tone === 'warning'
-      ? h('button', { type: 'button', style: styles.button, disabled: busy, onClick: () => void onUnlock() }, UNLOCK_LABEL)
+      ? h('button', { type: 'button', style: styles.button, disabled: busy, onClick: () => void onUnlock() }, unlockLabel(locale))
       : null,
   )
 }

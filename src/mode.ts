@@ -1,8 +1,10 @@
 /**
  * モード判定と `/sentinel` コマンドの解析・文面 (spec v0.4 §A, §B)。
- * DSH には依存しない純粋関数だけを置く。
+ * DSH には依存しない純粋関数だけを置く。文面は渡された表示言語 (spec-ui v0.5 §F) で作る。
  */
 
+import type { Locale } from './i18n.ts'
+import { MESSAGES, type Messages } from './messages.ts'
 import { isMode, type Mode } from './modes.ts'
 
 /** モードがどこから来たか。`command` = state.json の `/sentinel` 設定、`config` = YAML。 */
@@ -97,51 +99,50 @@ export interface StatusInput {
 }
 
 /** 1 行目: 実効モードとその出どころ。 */
-function modeLine(s: StatusInput): string {
-  const sourceText =
-    s.source === 'command'
-      ? `/sentinel で設定、YAML の既定は ${s.configMode}`
-      : 'YAML の設定'
-  return `cache-sentinel: モード ${s.mode}(${sourceText})`
+function modeLine(s: StatusInput, m: Messages): string {
+  return s.source === 'command'
+    ? m.modeLineFromCommand(s.mode, s.configMode)
+    : m.modeLineFromConfig(s.mode)
 }
 
 /** 2 行目: モードごとの説明。 */
-function modeDescription(s: StatusInput): string {
+function modeDescription(s: StatusInput, m: Messages): string {
   switch (s.mode) {
     case 'block':
-      return `最終応答から ${s.idleMinutes} 分で入力禁止(/unlock で解除、${s.unlockTtlMinutes} 分有効)`
+      return m.modeBlock(s.idleMinutes, s.unlockTtlMinutes)
     case 'archive':
-      return `最終応答から ${s.idleMinutes} 分でアーカイブ`
+      return m.modeArchive(s.idleMinutes)
     case 'both':
-      return `${s.idleMinutes} 分で入力禁止、${s.archiveAfterMinutes} 分でアーカイブ`
+      return m.modeBoth(s.idleMinutes, s.archiveAfterMinutes)
     case 'off':
-      return '停止中(何もしません)'
+      return m.modeOff
   }
 }
 
 /** 3 行目: このセッションの最終応答からの経過。 */
-function sessionLine(s: StatusInput): string {
+function sessionLine(s: StatusInput, m: Messages): string {
   if (s.sessionIdleMinutes === undefined) {
-    return 'このセッション: まだモデル応答がありません'
+    return m.modeSessionNoResponse
   }
-  return `このセッション: 最終応答から ${s.sessionIdleMinutes} 分`
+  return m.modeSession(s.sessionIdleMinutes)
 }
 
 /** `/sentinel`(引数なし)の状態表示の文面(spec §B)。 */
-export function statusMessage(s: StatusInput): string {
-  const lines = [modeLine(s), modeDescription(s), sessionLine(s)]
+export function statusMessage(s: StatusInput, locale: Locale): string {
+  const m = MESSAGES[locale]
+  const lines = [modeLine(s, m), modeDescription(s, m), sessionLine(s, m)]
   if (s.dryRun) {
-    lines.push('dryRun: ブロックもアーカイブもせずログのみ')
+    lines.push(m.modeDryRun)
   }
   return lines.join('\n')
 }
 
 /** `/sentinel` の使い方の文面(spec §B)。 */
-export function usageMessage(): string {
-  return '使い方: /sentinel [block|archive|both|off|default](引数なしで状態表示)'
+export function usageMessage(locale: Locale): string {
+  return MESSAGES[locale].sentinelUsage
 }
 
 /** 入力禁止が働かないモードで `/unlock` を打ったときの文面(spec §A)。 */
-export function unlockInactiveMessage(mode: Mode): string {
-  return `入力禁止は無効です(モード: ${mode})`
+export function unlockInactiveMessage(mode: Mode, locale: Locale): string {
+  return MESSAGES[locale].unlockInactive(mode)
 }

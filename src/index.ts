@@ -20,8 +20,10 @@ import {
 } from './block.ts'
 import { parseConfig, type Config } from './config.ts'
 import { runCycle, type CycleDeps } from './cycle.ts'
+import { resolveLocale, type Locale } from './i18n.ts'
 import type { TimedEvent } from './last-response.ts'
 import { createLogger, type Logger } from './log.ts'
+import { MESSAGES } from './messages.ts'
 import {
   archives,
   archiveThresholdMinutes,
@@ -99,6 +101,7 @@ export function createRuntime(
   cycleDeps: CycleDeps,
   log: Logger,
   io: RuntimeIO,
+  locale: Locale,
 ): Runtime {
   let state = initialState
   let prevArchived: ReadonlySet<string> | undefined
@@ -120,18 +123,18 @@ export function createRuntime(
     return true
   }
 
-  const block = createSentinel(config, log, io.now, () => blocks(current().mode))
+  const block = createSentinel(config, log, locale, io.now, () => blocks(current().mode))
 
   const runtime: Runtime = {
     mode: () => current().mode,
     onPreStep: (payload, next) => block.onPreStep(payload, next),
     onSessionEvent: (session, event) => block.onSessionEvent(session, event),
-    unlock: (agent) => block.unlock(agent, unlockInactiveMessage(current().mode)),
+    unlock: (agent) => block.unlock(agent, unlockInactiveMessage(current().mode, locale)),
     status: (session) => block.statusOf(session, current().mode),
 
     async sentinel(agent, rawInput) {
       const command = parseSentinelArgs(rawInput)
-      if (command.kind === 'invalid') return { kind: 'error', text: usageMessage() }
+      if (command.kind === 'invalid') return { kind: 'error', text: usageMessage(locale) }
       if (command.kind === 'set' || command.kind === 'default') {
         const before = current().mode
         if (command.kind === 'set') {
@@ -161,7 +164,7 @@ export function createRuntime(
           unlockTtlMinutes: config.unlockTtlMinutes,
           dryRun: config.dryRun,
           sessionIdleMinutes: block.idleMinutesOf(agent.session),
-        }),
+        }, locale),
       }
     },
 
@@ -214,7 +217,13 @@ export function statusResponse(request: Request, lookup: (sessionId: string) => 
 }
 
 export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void> {
-  const config = parseConfig(rawConfig)
+  const locale = resolveLocale([
+    process.env.LC_ALL,
+    process.env.LC_MESSAGES,
+    process.env.LANG,
+    Intl.DateTimeFormat().resolvedOptions().locale,
+  ])
+  const config = parseConfig(rawConfig, locale)
   const log = createLogger(ctx.logger, console)
   const home = resolveHome()
   const stateFile = config.stateFile ?? join(home, 'cache-sentinel', 'state.json')
@@ -226,6 +235,7 @@ export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void
     createDeps(ctx, () => scanLogMtimes(sessionsRoot), log),
     log,
     { now: Date.now, save: (state) => saveState(stateFile, state) },
+    locale,
   )
 
   // 自動圧縮も同じ waterfall の中でモデルを呼ぶので、最も外側で判定する(docs/spike.md W2)。
@@ -233,12 +243,12 @@ export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void
   ctx.on('session/event', (session, event) => runtime.onSessionEvent(session, event))
   ctx.commands.register({
     name: 'unlock',
-    description: 'キャッシュ切れで入力禁止のセッションで、次の送信を許可する(cache-sentinel)',
+    description: MESSAGES[locale].commandUnlockDescription,
     handler: ({ agent }) => runtime.unlock(agent),
   })
   ctx.commands.register({
     name: 'sentinel',
-    description: 'cache-sentinel の状態表示とモード切り替え: /sentinel [block|archive|both|off|default]',
+    description: MESSAGES[locale].commandSentinelDescription,
     handler: ({ agent, rawInput }) => runtime.sentinel(agent, rawInput),
   })
   ctx.interval(() => void runtime.tick(), config.checkIntervalSeconds * 1000)

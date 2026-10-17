@@ -74,13 +74,14 @@ You can check the current status and switch modes from the chat input box.
 
 ## UI Display
 
+- **Display language**: Text follows your environment. The Host resolves it from `LC_ALL`, `LC_MESSAGES`, `LANG`, and the system locale, in that order; the official Web UI resolves it from the browser language (`navigator.languages`). English, Japanese, and Simplified Chinese are supported, and unsupported languages fall back to English. Log output (lines prefixed with `[cache-sentinel]`) stays in Japanese.
 - **When a send is blocked (both the official Web UI and M3E)**:
-  - The conversation displays "送信を止めました(最終応答から N 分。キャッシュが切れている可能性が高いため)。" ("Send blocked (N minutes since the last response, as the cache has likely expired).") and "/unlock で次の 1 回を許可できます。" ("You can allow the next single send with /unlock."), along with the discarded input text (up to 2000 characters per message), as a command result line.
+  - The conversation displays "Send blocked (N minutes since the last response, as the cache has likely expired)." and "You can allow the next single send with /unlock.", along with the discarded input text (up to 2000 characters per message), as a command result line.
   - When steps with 0 input messages (such as automatic continuation) are rejected consecutively, notifications are throttled to at most once every 10 minutes per session.
 - **Pre-send banner display**:
   - **Official Web UI**: The client plugin (`lib/client.js`) displays a status banner above the input box (`conversation.input.dock`).
-    - Expired: "キャッシュ切れ(最終応答から N 分)。このまま送ると止められます。" ("Cache expired (N minutes since the last response). Sending now will be blocked.") and the "次の 1 回を許可(/unlock)" ("Allow the next single send (/unlock)") button
-    - Unlocked: "次の送信を許可中(キャッシュなしの料金になります)。あと M 分" ("Next send allowed (uncached input rates will apply). M min left")
+    - Expired: "Cache expired (N minutes since the last response). Sending now will be blocked." and the "Allow the next single send (/unlock)" button
+    - Unlocked: "Next send allowed (uncached input rates will apply). M min left"
   - **M3E (`dsh-webui-m3e`)**: The conversation line when blocked is displayed, but because M3E does not load client bundles from other plugins, displaying the pre-send banner requires support on the M3E side.
 - **Status API**:
   - `GET /api/cache-sentinel.status?sessionId=<id>` (with Connection authentication) returns the session status JSON.

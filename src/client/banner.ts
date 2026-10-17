@@ -2,8 +2,11 @@
  * 入力欄の上に出す「入力禁止中」バナー(spec-ui §E2)。純粋関数のみ。
  *
  * ブラウザ(公式 UI / m3e)でも動かすため、`node:` の import と DOM API は使わない。
- * DSH には依存しない。
+ * DSH には依存しない。文面は渡された表示言語 (spec-ui §F) で作る。
  */
+
+import type { Locale } from '../i18n.ts'
+import { MESSAGES } from '../messages.ts'
 
 /** status API(`/api/cache-sentinel.status`)の応答のうち、表示に必要な項目。 */
 export interface StatusLike {
@@ -19,8 +22,10 @@ export type Banner =
   | { tone: 'warning'; text: string; action: 'unlock' }
   | { tone: 'info'; text: string }
 
-/** 許可ボタンのラベル。 */
-export const UNLOCK_LABEL = '次の 1 回を許可(/unlock)'
+/** 許可ボタンのラベル(spec-ui §F)。 */
+export function unlockLabel(locale: Locale): string {
+  return MESSAGES[locale].unlockLabel
+}
 
 /** 有限数かどうか(NaN / Infinity を弾く)。 */
 function isFiniteNumber(value: unknown): value is number {
@@ -68,23 +73,26 @@ export function parseStatus(value: unknown): StatusLike | undefined {
  * - state = stale かつ dryRun でない → 警告 + /unlock ボタン。
  * - state = unlocked → 残り時間の情報。
  * - それ以外 → 何も出さない。
+ * `locale` はクライアント側で決めた表示言語 (spec-ui §F)。
  */
-export function bannerFor(status: StatusLike | undefined, now: number): Banner | undefined {
+export function bannerFor(status: StatusLike | undefined, now: number, locale: Locale): Banner | undefined {
   if (status === undefined || !status.gate) {
     return undefined
   }
+
+  const m = MESSAGES[locale]
 
   if (status.state === 'stale' && !status.dryRun) {
     if (status.idleMinutes === null) {
       return {
         tone: 'warning',
-        text: 'キャッシュ切れ。このまま送ると止められます。',
+        text: m.bannerStaleNoIdle,
         action: 'unlock',
       }
     }
     return {
       tone: 'warning',
-      text: `キャッシュ切れ(最終応答から ${status.idleMinutes} 分)。このまま送ると止められます。`,
+      text: m.bannerStale(status.idleMinutes),
       action: 'unlock',
     }
   }
@@ -93,13 +101,13 @@ export function bannerFor(status: StatusLike | undefined, now: number): Banner |
     if (status.unlockExpiresAt === null) {
       return {
         tone: 'info',
-        text: '次の送信を許可中(キャッシュなしの料金になります)。',
+        text: m.bannerUnlocked,
       }
     }
     const remainingMinutes = Math.max(0, Math.ceil((status.unlockExpiresAt - now) / 60000))
     return {
       tone: 'info',
-      text: `次の送信を許可中(キャッシュなしの料金になります)。あと ${remainingMinutes} 分`,
+      text: m.bannerUnlockedRemaining(remainingMinutes),
     }
   }
 
