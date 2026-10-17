@@ -156,6 +156,8 @@ pnpm run typecheck # 类型检查 (tsc --noEmit)
 pnpm run build     # 构建 (lib/index.js, lib/client.js)
 ```
 
+推送到 `main` 和 pull request 时，CI（`.github/workflows/ci.yml`）会在 Linux 和 Windows 上执行相同的三条命令。发布通过推送 `v*` 标签进行（`.github/workflows/release.yml`）：标签名必须与 `package.json` 的 `version` 一致，否则会失败，构建出的 `cache-sentinel.tgz` 会附加到 GitHub Release。
+
 从源码构建并安装本地 `.tgz` 时：
 
 ```sh
@@ -174,6 +176,12 @@ node scripts/dsh-rpc.mjs workspace/unarchiveSession '{"sessionId":"..."}'
 node scripts/dsh-rpc.mjs --args commands/execute '{"agentId":"<sessionId>","line":"/unlock","submittedAttachments":[]}'
 ```
 
+`scripts/dsh-compat.ts` 用于检查 cache-sentinel 所使用的 `@deepseek-ai/*` 各包是否因 DSH 版本而变化。发布新的 DSH 版本时，它会将各包与已确认的版本进行比较，并报告 `same`（无变化，预计兼容）/ `diff`（有变化，需要人工阅读差异）/ `missing`（获取失败）。
+
+```sh
+node scripts/dsh-compat.ts /var/tmp/dsh-compat 0.2.1-rc.1 0.2.1-rc.2
+```
+
 设计、规格与调研详情请参阅 [docs/](docs/README.md)（`docs/` 下的文档均为日语）。
 
 - [docs/spec.md](docs/spec.md)：总体规格（模式切换与禁止输入）
@@ -183,7 +191,10 @@ node scripts/dsh-rpc.mjs --args commands/execute '{"agentId":"<sessionId>","line
 
 ## 支持版本与运行环境
 
-- **DeepSeek Harness（DSH）**：**0.2.0-rc.2**（已在该版本下完成调研与动作确认，依据请参阅 [docs/spike.md](docs/spike.md)）
+- **DeepSeek Harness（DSH）**：**0.2.0-rc.2 ～ 0.2.1-rc.1**（包含 0.2.1-alpha.1～alpha.5）
+  - **0.2.0-rc.2**：已在真实环境确认。
+  - **0.2.1-alpha.1～alpha.5、0.2.1-rc.1**：已将 cache-sentinel 使用的 API 的类型定义与实现同 0.2.0-rc.2 进行比较确认（2026-10-17）。未在真实环境确认。在 0.2.1-rc.1 中，来自浏览器以外的连接端的状态获取 API 会返回 403（该连接端仅是发送前横幅不显示）。
+  - 依据请参阅 [docs/spike.md](docs/spike.md)。确认新版本时可使用 [scripts/dsh-compat.ts](scripts/dsh-compat.ts)。
 - **Node.js / pnpm**：标准 DSH CLI 在添加插件时会使用 `PATH` 上的 `pnpm`（通过 Releases 的 `.tgz` 安装时，用户侧无需获取源码或构建）
 
 ## 许可证

@@ -107,6 +107,69 @@
 
 ---
 
+# DSH 0.2.1 系との互換調査 (2026-10-17) — README の対応範囲拡大(0.2.0-rc.2〜0.2.1-rc.1)の根拠
+
+`$PK` = 各版の `node_modules/@deepseek-ai`。方法は、npm から 0.2.1-alpha.1〜alpha.5 と 0.2.1-rc.1 の
+該当パッケージを取得し、型定義(`lib/types/*.d.ts`)と実装(`lib/index.js` など)を 0.2.0-rc.2 と diff したもの。
+行番号は特記なければ rc.1 のもの。DSH の実機起動はしていない(0.2.0-rc.2 の実機確認は上記の各節で実施済み)。
+同じ比較は `scripts/dsh-compat.ts` で再実行できる(使い方は README の Development 節)。
+
+## lib の一致状況(package.json と CHANGELOG を除く)
+- alpha.3〜alpha.5 は rc.1 と一致。例外は dsh-client-modules(alpha.3〜5。rc.1 でリリース一致ゲートが追加)、
+  dsh-client-ui-conversation と dsh-web-app(alpha.3 のみ。コマンドチップと tool-plugin-market の preset)。
+- alpha.1 / alpha.2 は中間の状態。base と compaction-basic は 4 版で同一。agent-loop と headless は
+  alpha.1 = rc.2、alpha.2 = rc.1。slots と workspace は alpha.1 / alpha.2 とも rc.2 と同一。
+- cordis は 4.0.4 / 4.0.5-alpha.1 / 4.0.5 で lib が同一。
+
+## 項目ごと
+| 項目 | alpha.1 | alpha.2 | alpha.3〜5 | rc.1 |
+|---|---|---|---|---|
+| 1 `agent/pre-step` | 変更なし | 変更なし | 変更なし | 変更なし |
+| 2 Session / command イベント | 変更なし | 内部実装のみ | 変更なし | 変更なし |
+| 3 `commands.register` | 変更なし | 変更なし | 変更なし | 変更なし |
+| 4 `workspaceRegistry` / `sessionPersistence.list()` | 変更なし | 任意項目 `formatStatus` の追加のみ | 同左 | 同左 |
+| 5 `connection.fetch.register` | 変更なし | 型は同じ(信頼判定の変更のみ) | 同左 | 型は同じ。owner 以外の Peer に exact route が 403 |
+| 6 セッションログの配置 | 変更なし | 変更なし | 変更なし | 変更なし |
+| 7 クライアント(`dsh.client`・`conversation.input.dock`・`remote.commands.execute`) | 変更なし | 変更なし | 変更なし | 変更なし |
+| 8 バンドルの提供サービス | 変更なし | 変更なし | 変更なし | 変更なし |
+
+壊れる箇所は見つからなかった。比べたパッケージは dsh-agent、dsh-agent-loop、dsh-compaction-basic、
+dsh-session、dsh-commands、dsh-workspace、dsh-session-persistence(-jsonl)、dsh-client-connection、
+dsh-client-modules、dsh-client-ui-conversation、dsh-client-ui-slots、dsh-client-ui-chat、dsh-base、
+dsh-web-app、dsh-headless、cordis。
+
+## 根拠(rc.1)
+1. pre-step: payload `{agent, messages, turn, step, signal}` は `$PK/dsh-agent/lib/types/runtime-types.d.ts:304-310`、
+   `PreStepDecision` は同 `:92-99`。reject するとターンは `blocked` で終わる
+   (`$PK/dsh-agent-loop/lib/index.js:909-922,961`)。`$PK/dsh-compaction-basic/lib/index.js` は rc.2 と同一で、
+   `:839-841` で pre-step 内から `compactIfNeeded` を呼ぶ。cordis の prepend は
+   `$PK/cordis/lib/index.js:336`(unshift)。prepend の pre-step リスナーは dsh-agent(`index.js:204`)と
+   dsh-session-reference(`index.js:477`)で、どちらも先に `next()` を呼び、reject はそのまま返す。
+   dsh-subagent-in-process-driver は alpha.1 まで存在し(prepend なし、`next()` の結果を素通し)、alpha.2 以降は廃止。
+2. Session: `session/event` は `$PK/dsh-session/lib/types/index.d.ts:61`、`snapshotEvents` `:224`、
+   `ownEvents` `:231`、`append` `:277`(`time: Date.now()` を付ける)。`step/end` は `types.d.ts:284`。
+   `command/run` / `command/done` の形は `$PK/dsh-commands/lib/types/types.d.ts:101-118`。
+   rc.1 で run/done の対応を検査する invariant が削除されたが、cache-sentinel は対で書くので影響なし。
+   alpha.2 で append の内部実装が `publicationEntry`/`commit` に分かれたが挙動は同じ。
+3. commands: `$PK/dsh-commands/lib/types/index.d.ts:18-54,94`、`CommandResult` は `types.d.ts:33-41`。
+4. workspace: getter は `$PK/dsh-workspace/lib/types/index.d.ts:196,231`、`archiveSession` は `:214`。
+   エラー型と実装は同一。`list()` の結果に任意の `formatStatus`
+   (`$PK/dsh-session-persistence/lib/types/index.d.ts:25-26`、alpha.2 以降)。
+5. connection: 提供元は `@deepseek-ai/dsh-client-connection`(dsh-web-app の `id: connection` 行)。
+   `ConnectionFetchRoute` は `rpc.d.ts:119-132`、`register` は `:140`。rc.1 では owner 以外の Peer に 403
+   (`lib/index.js:830`)。ブラウザは owner(`:714`)。
+6. ログ配置: `$PK/dsh-session-persistence-jsonl/lib/index.js:745-965` は rc.2 と同一。`encodeSegment`
+   (`:858`)は `~XXXX`、ファイル名は `session.v4.jsonl[.zstd]`、`SESSION_FORMAT_VERSION` は 4。
+   root は dsh-base の `dshHomePath('sessions')`。
+7. クライアント: `dsh.client` の解析は `$PK/dsh-client-modules/lib/index.js:66-74,733-745`、inject の
+   先行読み込みは `client.js:789`。`conversation.input.dock` は
+   `$PK/dsh-client-ui-conversation/lib/types/client/contract/slots.d.ts:295`。
+8. バンドル: `headless` = dsh-base + dsh-headless、`web` = dsh-base + dsh-web-app。dsh-base は
+   `timer`・`sessions`・`sessionPersistence`・`commands` を提供。`workspaceRegistry` と `connection` は
+   dsh-web-app だけ。そのため headless では cache-sentinel は起動しない(全版共通)。
+
+---
+
 # 表示言語の調査 (2026-10-17, DSH 0.2.0-rc.2)
 
 ## X1: DSH の UI 言語設定 — 確認
