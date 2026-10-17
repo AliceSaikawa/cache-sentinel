@@ -155,6 +155,8 @@ pnpm run typecheck # type check (tsc --noEmit)
 pnpm run build     # build (lib/index.js, lib/client.js)
 ```
 
+CI (`.github/workflows/ci.yml`) runs the same three commands on Linux and Windows for every push to `main` and every pull request. Releases come from `.github/workflows/release.yml` on a `v*` tag push: the tag must match the `version` in `package.json`, and the built `cache-sentinel.tgz` is attached to the GitHub Release.
+
 To build from source and install a local `.tgz`:
 
 ```sh

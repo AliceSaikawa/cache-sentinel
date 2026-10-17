@@ -155,6 +155,8 @@ pnpm run typecheck # 型チェック (tsc --noEmit)
 pnpm run build     # ビルド (lib/index.js, lib/client.js)
 ```
 
+`main` への push と pull request では、CI(`.github/workflows/ci.yml`)が Linux と Windows で同じ 3 つのコマンドを実行します。リリースは `v*` タグの push で行い(`.github/workflows/release.yml`)、タグ名が `package.json` の `version` と一致しないと失敗します。ビルドした `cache-sentinel.tgz` が GitHub Release に添付されます。
+
 ソースからビルドしてローカルの `.tgz` を導入する場合：
 
 ```sh
