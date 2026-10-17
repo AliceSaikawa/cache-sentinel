@@ -23,7 +23,7 @@ You can switch at any time from the chat `/sentinel` command to `both` mode, whi
    dsh plugin --profile web add https://github.com/AliceSaikawa/cache-sentinel/releases/latest/download/cache-sentinel.tgz
    ```
 
-   `web` is an example. Specify the profile name you actually use.
+   `web` is an example. Specify the profile name you actually use. cache-sentinel works only in profiles that include the Web app, such as `web` and `desktop` (see [Supported Versions and Environment](#supported-versions-and-environment)).
 
 2. Restart DSH.
 
@@ -195,6 +195,9 @@ See [docs/](docs/README.md) for design, specifications, and investigation detail
   - **0.2.0-rc.2**: verified on a real environment.
   - **0.2.1-alpha.1 to alpha.5 and 0.2.1-rc.1**: the type definitions and implementations of the APIs that cache-sentinel uses were compared against 0.2.0-rc.2 (2026-10-17). Not verified on a real environment. In 0.2.1-rc.1, the status API returns 403 for connections other than the browser (in that case the pre-send banner is simply not shown).
   - See [docs/spike.md](docs/spike.md) for the evidence. To check a newer version, run [scripts/dsh-compat.ts](scripts/dsh-compat.ts).
+- **DSH profiles**: `web` and `desktop`, that is, profiles whose `dsh.profile.bundles` includes `@deepseek-ai/dsh-web-app` (custom profiles created from the `web` template also qualify). cache-sentinel requires the `workspaceRegistry` and `connection` services, which only that bundle provides.
+  - In other profiles such as `headless` and `acp`, cache-sentinel does not start. It keeps waiting for those services, so input blocking, archiving, `/sentinel`, and `/unlock` are all unavailable. No error is reported, and the `[cache-sentinel]` startup log line does not appear.
+  - `desktop` uses the same bundle as `web` but has not been verified on a real environment. The npm `dsh` CLI rejects plugin management for the `desktop` profile, so add the plugin with the `dsh` command installed with the Desktop app.
 - **Node.js / pnpm**: The standard DSH CLI uses `pnpm` on `PATH` when adding plugins (when installing from the Releases `.tgz`, fetching the source or building on the user side is not required)
 
 ## License

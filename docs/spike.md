@@ -181,3 +181,27 @@ dsh-web-app、dsh-headless、cordis。
 - cache-sentinel はこれを使わず、Host は環境変数(`LC_ALL` / `LC_MESSAGES` / `LANG`)と `Intl`、
   クライアントは `navigator.languages` で言語を決める(`docs/spec-ui.md` §F)。
   設定の読み取り口やクライアントの `inject` を増やさないため。
+
+---
+
+# 対象プロファイルの調査 (2026-10-18, DSH 0.2.0-rc.2) — #15
+
+結論: 対象は `dsh-web-app` バンドルを含むプロファイル(`web`・`desktop`、`web` のテンプレートから作ったもの)。
+headless などでは起動しない(README「Supported Versions and Environment」)。案 2(`workspaceRegistry` と
+`connection` を任意の依存にする)は、headless では止めても `/unlock` する手段がなく #7 の方針とあわせて
+決める必要があるため採らなかった。`$PK` は rc.2 の `node_modules/@deepseek-ai`。
+
+- 同梱テンプレート: `acp` = base + acp-app、`web` = base + web-app、`headless` = base + headless、
+  `sdk` = base + sdk-app、`sdk-minimal` = sdk-minimal のみ(`$PK/dsh-app-boot/lib/index.js:529-535`)。
+  テンプレートの無い名前を `dsh plugin` で初期化すると base のみ(同 `:543`)。
+- `workspaceRegistry` は `dsh-workspace`(`$PK/dsh-workspace/lib/types/index.d.ts:80-83`)、`connection` は
+  `dsh-client-connection`。どちらも行があるのは `$PK/dsh-web-app/cordis.patch.yml:91-92,216-217` だけで、
+  dsh-base・dsh-headless・dsh-acp-app の `cordis.patch.yml` には無い。sdk-app / sdk-minimal は rc.2 の
+  インストールに含まれず未確認。
+- 必須の依存が揃わないプラグインは `PENDING`(待機)のままで、`apply` は呼ばれない
+  (`$PK/cordis/lib/types/fiber.d.ts:59-66`)。そのため `[cache-sentinel]` の開始ログも出ない。
+- `desktop` は Electron 側が持つプロファイルで、構成はこの checkout に無い。web-app バンドルを使う根拠は、
+  `$PK/dsh-web-app/cordis.patch.yml:45-59,277-280` に `profileContext.name !== 'desktop'` で切り替える行があることと、
+  `$PK/dsh-web-app/README.md:80` の「Desktop compositions using this bundle」。実機では未確認(#16)。
+- npm 版 CLI は `desktop` のプラグイン管理を拒否し、Desktop に同梱の `dsh` コマンドで管理する
+  (`dsh/README.md:20`)。
