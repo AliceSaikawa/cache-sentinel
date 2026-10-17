@@ -1,9 +1,10 @@
 /**
  * 永続状態 (state.json, version 2) の読み書き・破損復旧 (§C)。
- * 純粋関数 (parseState) と副作用 (loadState / saveState) を分ける。
- * ファイル操作は node:fs/promises のみを使う。
+ * 純粋関数 (parseState / tempPathFor) と副作用 (loadState / saveState) を分ける。
+ * ファイル操作は node:fs/promises と node:path のみを使う。
  */
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 
 import { isMode, type Mode } from './modes.ts'
 
@@ -105,10 +106,10 @@ export function parseState(text: string | undefined): State {
  * state.json を読む。ファイル欠落・読み取りエラーは空の状態として扱う (§C)。
  * ファイルは作らない。
  */
-export async function loadState(path: string): Promise<State> {
+export async function loadState(filePath: string): Promise<State> {
   let text: string
   try {
-    text = await readFile(path, 'utf8')
+    text = await readFile(filePath, 'utf8')
   } catch {
     return emptyState()
   }
@@ -116,39 +117,35 @@ export async function loadState(path: string): Promise<State> {
 }
 
 /**
+ * 保存先と同じディレクトリの一時ファイルのパスを返す (純粋関数)。
+ * `p` に `node:path` の `win32` / `posix` を渡すと、その OS の区切り文字で計算する。
+ * 既定は実行環境の OS に従う `node:path`。
+ * 例: `p = path.win32` で `C:\Users\u\.dsh\cache-sentinel\state.json` を渡すと
+ * `C:\Users\u\.dsh\cache-sentinel\state.json.<unique>.tmp` になる。
+ */
+export function tempPathFor(target: string, unique: string, p: typeof path = path): string {
+  return `${p.join(p.dirname(target), p.basename(target))}.${unique}.tmp`
+}
+
+/**
  * state.json を atomic に書く (同じディレクトリの一時ファイル → rename)。
  * 親ディレクトリは mkdir -p する。JSON は整形し末尾に改行を付ける。
  * rename に失敗したら一時ファイルを消して例外を伝える。
+ * `p` は保存先の区切り文字に合わせた path 実装 (既定は実行環境の OS に従う)。
  */
-export async function saveState(path: string, state: State): Promise<void> {
-  const dir = parentDir(path)
+export async function saveState(filePath: string, state: State, p: typeof path = path): Promise<void> {
+  const dir = p.dirname(filePath)
   await mkdir(dir, { recursive: true })
 
   const json = `${JSON.stringify(state, null, 2)}\n`
-  const tmp = `${dir}/${basename(path)}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
+  const unique = `${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}`
+  const tmp = tempPathFor(filePath, unique, p)
 
   await writeFile(tmp, json, 'utf8')
   try {
-    await rename(tmp, path)
+    await rename(tmp, filePath)
   } catch (error) {
     await unlink(tmp).catch(() => {})
     throw error
   }
-}
-
-/** POSIX パスの親ディレクトリを返す (node:path を使わない)。 */
-function parentDir(filePath: string): string {
-  const index = filePath.lastIndexOf('/')
-  if (index < 0) {
-    return '.'
-  }
-  if (index === 0) {
-    return '/'
-  }
-  return filePath.slice(0, index)
-}
-
-/** POSIX パスのファイル名を返す。 */
-function basename(filePath: string): string {
-  return filePath.slice(filePath.lastIndexOf('/') + 1)
 }
