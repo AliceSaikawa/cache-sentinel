@@ -155,6 +155,8 @@ pnpm run typecheck # 类型检查 (tsc --noEmit)
 pnpm run build     # 构建 (lib/index.js, lib/client.js)
 ```
 
+推送到 `main` 和 pull request 时，CI（`.github/workflows/ci.yml`）会在 Linux 和 Windows 上执行相同的三条命令。发布通过推送 `v*` 标签进行（`.github/workflows/release.yml`）：标签名必须与 `package.json` 的 `version` 一致，否则会失败，构建出的 `cache-sentinel.tgz` 会附加到 GitHub Release。
+
 从源码构建并安装本地 `.tgz` 时：
 
 ```sh
