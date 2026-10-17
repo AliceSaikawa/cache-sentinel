@@ -98,16 +98,16 @@ Desktop プロファイルでの実機確認は**未確認**。コード確認�
 
 ## 見つかった不具合・懸念
 
-### 新規(Issue 化予定)
+### 新規(Issue 化済み)
 
-既存 Issue との重複を確認したうえで新しい課題。番号は本書では振らない。
+既存 Issue との重複を確認したうえで新しく起票した課題。
 
-1. **バナーの `/unlock` ボタンが動かない**(実機 + コード確認)。失効中(警告トーン)にボタンを押すと `cannot get property "remote.commands" without inject` の例外で失敗する(状態 API も会話も無変化)。原因: クライアント半分の `inject` が `['slots','remote']` で `remote.commands` が無い(`src/client/index.ts:12`)。押下時には例外が通知されず静かに失敗するため(ボタンは警告トーンでのみ描かれる)、利用者には原因が見えない。DSH のクライアントでは `remote.commands` は独立したサービスキーで、公式プラグインは必ず併記する(`@deepseek-ai/dsh-client-ui-plan/lib/client.js:605-614`、`@deepseek-ai/dsh-client-ui-commands/lib/client.js:752-757`)。情報トーンではボタンを描かないためこの形でしか現れない。受入基準 E2 のボタン経路を満たせない。あわせて `remote.commands.execute` の戻り値の union(`{ok: false, error}`)を捨てない(`src/client/index.ts:55`。公式は `ok` を見る: `@deepseek-ai/dsh-client-ui-commands/lib/client.js:1068-1069`)。
-2. **ブロック通知が折りたたみの奥に隠れる**(実機)。通知の `command/run`+`command/done` はブロックされた turn の内側(`turn/start` と `turn/end` の間)に書かれ、公式 UI はその turn を process group として折りたたむ。送信直後に見えるのは turn の完了表示だけで、通知本文は 2 段(「Completed …」を開いてから内側の項目を開く)先でしか読めない。正常な `/unlock` の行は turn の外に書かれるため最初から見える。spec-ui §D は「コマンド結果の行として描画すること」のみを要求しており仕様違反ではないが、受入基準 D1 を「利用者が気づける」と読むなら見直しの価値がある(通知を turn 外に置く等。仕様判断が必要)。
-3. **ui-comfort 併用時に 1 回目の Enter が送信にならず誤認しやすい**(実機)。失効中でも Enter 1 回は改行が入るだけなので、利用者が「ブロックされた」と誤認する余地がある。2 回押せば送信されサーバー側でブロックされるので自然に判明するが、バナーの文言は「このまま送ると止められます」のみ。関連する切り分け未了の観察: 1 回目の Enter で改行が 2 個入った(§5)。クライアント側で Enter を止める方式は ui-comfort の capture/replay と将来競合するため採用しない。誤認の解消は文言・ドキュメント側で扱う。
-4. **拒否通知にモデル向けの英語文が全文出る**(コード確認のみ)。プラグイン由来の入力(answer-guard のリマインダー、`source.form: 'notice'`)が破棄されると、モデル向けの英語の指示文(REMINDER_TEXT)がそのまま「破棄された入力」の節に出る(`src/block.ts:135` → `src/notice.ts:55-80`、1 件 2000 字までで切る)。source の判別ができれば summary の短文に差し替えるか省略表示できる(#7 の「判定データの調整」と共通する部分がある)。
-5. **同一文面の通知が積み重なる**(コード確認のみ)。入力メッセージがある拒否は毎回通知する仕様(`src/notice.ts:104-111`)のため、連打や誤送信の反復で同一文面のブロック通知が複数行積み上がる(spec §D の変更で、同一テキストの連続通知は N 分に 1 件に抑える案)。
-6. **対応 DSH 版を package.json で宣言していない**(コード確認のみ)。対応範囲(0.2.0-rc.2〜0.2.1-rc.1、alpha 含む)が README と spike の記載だけ(`README.ja.md:194`、`docs/spike.md:110-139`)で、`peerDependencies`/`engines` が無い。DSH には宣言された peer range を起動時に強制する仕組みがあるため、宣言ができれば機械的に防げる。#12(README 上の範囲明記)とは補完の関係で両立できる。ただし DSH の host plugin として `peerDependencies` がどう評価されるかの確認が先。
+1. **バナーの `/unlock` ボタンが動かない(#26)**(実機 + コード確認)。失効中(警告トーン)にボタンを押すと `cannot get property "remote.commands" without inject` の例外で失敗する(状態 API も会話も無変化)。原因: クライアント半分の `inject` が `['slots','remote']` で `remote.commands` が無い(`src/client/index.ts:12`)。押下時には例外が通知されず静かに失敗するため(ボタンは警告トーンでのみ描かれる)、利用者には原因が見えない。DSH のクライアントでは `remote.commands` は独立したサービスキーで、公式プラグインは必ず併記する(`@deepseek-ai/dsh-client-ui-plan/lib/client.js:605-614`、`@deepseek-ai/dsh-client-ui-commands/lib/client.js:752-757`)。情報トーンではボタンを描かないためこの形でしか現れない。受入基準 E2 のボタン経路を満たせない。あわせて `remote.commands.execute` の戻り値の union(`{ok: false, error}`)を捨てない(`src/client/index.ts:55`。公式は `ok` を見る: `@deepseek-ai/dsh-client-ui-commands/lib/client.js:1068-1069`)。
+2. **ブロック通知が折りたたみの奥に隠れる(#27)**(実機)。通知の `command/run`+`command/done` はブロックされた turn の内側(`turn/start` と `turn/end` の間)に書かれ、公式 UI はその turn を process group として折りたたむ。送信直後に見えるのは turn の完了表示だけで、通知本文は 2 段(「Completed …」を開いてから内側の項目を開く)先でしか読めない。正常な `/unlock` の行は turn の外に書かれるため最初から見える。spec-ui §D は「コマンド結果の行として描画すること」のみを要求しており仕様違反ではないが、受入基準 D1 を「利用者が気づける」と読むなら見直しの価値がある(通知を turn 外に置く等。仕様判断が必要)。
+3. **ui-comfort 併用時に 1 回目の Enter が送信にならず誤認しやすい(#28)**(実機)。失効中でも Enter 1 回は改行が入るだけなので、利用者が「ブロックされた」と誤認する余地がある。2 回押せば送信されサーバー側でブロックされるので自然に判明するが、バナーの文言は「このまま送ると止められます」のみ。関連する切り分け未了の観察: 1 回目の Enter で改行が 2 個入った(§5)。クライアント側で Enter を止める方式は ui-comfort の capture/replay と将来競合するため採用しない。誤認の解消は文言・ドキュメント側で扱う。
+4. **拒否通知にモデル向けの英語文が全文出る(#29)**(コード確認のみ)。プラグイン由来の入力(answer-guard のリマインダー、`source.form: 'notice'`)が破棄されると、モデル向けの英語の指示文(REMINDER_TEXT)がそのまま「破棄された入力」の節に出る(`src/block.ts:135` → `src/notice.ts:55-80`、1 件 2000 字までで切る)。source の判別ができれば summary の短文に差し替えるか省略表示できる(#7 の「判定データの調整」と共通する部分がある)。
+5. **同一文面の通知が積み重なる(#30)**(コード確認のみ)。入力メッセージがある拒否は毎回通知する仕様(`src/notice.ts:104-111`)のため、連打や誤送信の反復で同一文面のブロック通知が複数行積み上がる(spec §D の変更で、同一テキストの連続通知は N 分に 1 件に抑える案)。
+6. **対応 DSH 版を package.json で宣言していない(#31)**(コード確認のみ)。対応範囲(0.2.0-rc.2〜0.2.1-rc.1、alpha 含む)が README と spike の記載だけ(`README.ja.md:194`、`docs/spike.md:110-139`)で、`peerDependencies`/`engines` が無い。DSH には宣言された peer range を起動時に強制する仕組みがあるため、宣言ができれば機械的に防げる。#12(README 上の範囲明記)とは補完の関係で両立できる。ただし DSH の host plugin として `peerDependencies` がどう評価されるかの確認が先。
 
 ### 既存 Issue と重複するもの
 

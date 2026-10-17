@@ -187,7 +187,7 @@ dsh-web-app、dsh-headless、cordis。
 # クライアント側 `remote.commands` の inject (2026-10-18, DSH 0.2.0-rc.2)
 
 `$PK` = `<DSH のインストール先>/node_modules/@deepseek-ai`。Issue #16 の確認(web プロファイルの実機)で見つかった
-(詳細は `rdsh-check.md`。不具合として Issue 化予定)。
+(詳細は `rdsh-check.md`。不具合は #26)。
 
 - クライアントプラグインで `remote.commands` を使うには、クライアントの `inject` に
   `"remote"` とは別に `"remote.commands"` を宣言する必要がある(独立したサービスキー)。
