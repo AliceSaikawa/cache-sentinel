@@ -1,0 +1,3 @@
+# lib/ はビルド結果だが、github: 指定でのインストールに必要なのでコミットする(issue #14)。
+# Windows の checkout でも LF のままにして、ビルド結果と git の中身を同じに保つ。
+lib/*.js text eol=lf linguist-generated=true

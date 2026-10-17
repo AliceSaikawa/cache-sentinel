@@ -20,10 +20,12 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
 1. 执行以下 1 条命令。
 
    ```sh
-   dsh plugin --profile web add https://github.com/AliceSaikawa/cache-sentinel/releases/latest/download/cache-sentinel.tgz
+   dsh plugin --profile web add github:AliceSaikawa/cache-sentinel
    ```
 
    `web` 为示例，请指定您实际使用的配置文件（profile）名称。
+
+   此方式安装 `main` 的最新代码。如需固定版本，请在末尾以 `#v<版本>` 的形式附加标签（例如 `github:AliceSaikawa/cache-sentinel#v1.2.3`）。`v0.5.0` 及更早的标签不包含已构建的 `lib/`，无法用此方式安装。也可以指定 GitHub Release 中附带的 `cache-sentinel.tgz` 的 URL 进行安装。
 
 2. 重启 DSH。
 
@@ -156,7 +158,9 @@ pnpm run typecheck # 类型检查 (tsc --noEmit)
 pnpm run build     # 构建 (lib/index.js, lib/client.js)
 ```
 
-推送到 `main` 和 pull request 时，CI（`.github/workflows/ci.yml`）会在 Linux 和 Windows 上执行相同的三条命令。发布通过推送 `v*` 标签进行（`.github/workflows/release.yml`）：标签名必须与 `package.json` 的 `version` 一致，否则会失败，构建出的 `cache-sentinel.tgz` 会附加到 GitHub Release。
+通过 `github:` 安装时不会进行构建，因此仓库中也包含已构建的 `lib/`。修改 `src/` 后，请执行 `pnpm run build` 并一并提交 `lib/`。
+
+推送到 `main` 和 pull request 时，CI（`.github/workflows/ci.yml`）会在 Linux 和 Windows 上执行相同的三条命令，并检查已提交的 `lib/` 与构建结果一致。发布通过推送 `v*` 标签进行（`.github/workflows/release.yml`）：标签名必须与 `package.json` 的 `version` 一致，否则会失败，构建出的 `cache-sentinel.tgz` 会附加到 GitHub Release。
 
 从源码构建并安装本地 `.tgz` 时：
 
@@ -195,7 +199,7 @@ node scripts/dsh-compat.ts /var/tmp/dsh-compat 0.2.1-rc.1 0.2.1-rc.2
   - **0.2.0-rc.2**：已在真实环境确认。
   - **0.2.1-alpha.1～alpha.5、0.2.1-rc.1**：已将 cache-sentinel 使用的 API 的类型定义与实现同 0.2.0-rc.2 进行比较确认（2026-10-17）。未在真实环境确认。在 0.2.1-rc.1 中，来自浏览器以外的连接端的状态获取 API 会返回 403（该连接端仅是发送前横幅不显示）。
   - 依据请参阅 [docs/spike.md](docs/spike.md)。确认新版本时可使用 [scripts/dsh-compat.ts](scripts/dsh-compat.ts)。
-- **Node.js / pnpm**：标准 DSH CLI 在添加插件时会使用 `PATH` 上的 `pnpm`（通过 Releases 的 `.tgz` 安装时，用户侧无需获取源码或构建）
+- **Node.js / pnpm**：标准 DSH CLI 在添加插件时会使用 `PATH` 上的 `pnpm`（通过 `github:` 或 Releases 的 `.tgz` 安装时，用户侧无需构建）
 
 ## 许可证
 

@@ -20,10 +20,12 @@ DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古い�
 1. 次の 1 コマンドを実行します。
 
    ```sh
-   dsh plugin --profile web add https://github.com/AliceSaikawa/cache-sentinel/releases/latest/download/cache-sentinel.tgz
+   dsh plugin --profile web add github:AliceSaikawa/cache-sentinel
    ```
 
    `web` は例です。実際に使っているプロファイル名を指定してください。
+
+   この指定では `main` の最新を導入します。版を固定するときは、末尾に `#v<版>` の形でタグを付けます（例：`github:AliceSaikawa/cache-sentinel#v1.2.3`）。`v0.5.0` 以前のタグはビルド済みの `lib/` を含まないため、この方法では導入できません。GitHub Releases に添付した `cache-sentinel.tgz` の URL を指定して導入することもできます。
 
 2. DSH を再起動します。
 
@@ -156,7 +158,9 @@ pnpm run typecheck # 型チェック (tsc --noEmit)
 pnpm run build     # ビルド (lib/index.js, lib/client.js)
 ```
 
-`main` への push と pull request では、CI(`.github/workflows/ci.yml`)が Linux と Windows で同じ 3 つのコマンドを実行します。リリースは `v*` タグの push で行い(`.github/workflows/release.yml`)、タグ名が `package.json` の `version` と一致しないと失敗します。ビルドした `cache-sentinel.tgz` が GitHub Release に添付されます。
+`github:` 指定での導入はビルドを行わないため、ビルド済みの `lib/` もリポジトリに含めています。`src/` を変えたら `pnpm run build` を実行し、`lib/` も合わせてコミットしてください。
+
+`main` への push と pull request では、CI(`.github/workflows/ci.yml`)が Linux と Windows で同じ 3 つのコマンドを実行し、コミットされた `lib/` がビルド結果と一致することも確認します。リリースは `v*` タグの push で行い(`.github/workflows/release.yml`)、タグ名が `package.json` の `version` と一致しないと失敗します。ビルドした `cache-sentinel.tgz` が GitHub Release に添付されます。
 
 ソースからビルドしてローカルの `.tgz` を導入する場合：
 
@@ -195,7 +199,7 @@ node scripts/dsh-compat.ts /var/tmp/dsh-compat 0.2.1-rc.1 0.2.1-rc.2
   - **0.2.0-rc.2**：実機で確認済み。
   - **0.2.1-alpha.1〜alpha.5・0.2.1-rc.1**：cache-sentinel が使う API の型定義と実装を 0.2.0-rc.2 と比べて確認（2026-10-17）。実機は未確認。0.2.1-rc.1 では、ブラウザ以外の接続元からの状態取得 API が 403 になる（その接続元では送信前バナーが出ないだけ）。
   - 根拠は [docs/spike.md](docs/spike.md) を参照。新しい版が出たときの確認は [scripts/dsh-compat.ts](scripts/dsh-compat.ts) で行えます。
-- **Node.js / pnpm**：通常の DSH CLI はプラグイン追加時に `PATH` 上の `pnpm` を使用します（Releases の `.tgz` から導入する場合、利用者側でのソース取得・ビルドは不要です）
+- **Node.js / pnpm**：通常の DSH CLI はプラグイン追加時に `PATH` 上の `pnpm` を使用します（`github:` 指定や Releases の `.tgz` から導入する場合、利用者側でのビルドは不要です）
 
 ## ライセンス
 
