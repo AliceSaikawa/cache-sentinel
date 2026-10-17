@@ -166,21 +166,37 @@ test('decideUnlock は入力を変更しない', () => {
 
 test('unlockMessage: granted の文言', () => {
   assert.equal(
-    unlockMessage({ kind: 'granted', idleMinutes: 90, ttlMinutes: 10 }),
+    unlockMessage({ kind: 'granted', idleMinutes: 90, ttlMinutes: 10 }, 'ja'),
     '次の送信を許可しました。最終応答から 90 分経過しているため、キャッシュなしの料金になります(許可は 10 分有効)',
   )
 })
 
 test('unlockMessage: fresh の文言', () => {
   assert.equal(
-    unlockMessage({ kind: 'fresh', idleMinutes: 42 }),
+    unlockMessage({ kind: 'fresh', idleMinutes: 42 }, 'ja'),
     '最終応答から 42 分です。キャッシュは有効なのでそのまま送信できます',
   )
 })
 
 test('unlockMessage: no-response の文言', () => {
   assert.equal(
-    unlockMessage({ kind: 'no-response' }),
+    unlockMessage({ kind: 'no-response' }, 'ja'),
     'このセッションはまだモデル応答がありません',
+  )
+})
+
+// --- 表示言語 (spec-ui v0.5 §F) ---
+
+test('unlockMessage: 英語の文面', () => {
+  assert.equal(
+    unlockMessage({ kind: 'granted', idleMinutes: 90, ttlMinutes: 10 }, 'en'),
+    'Allowed the next send. 90 minutes have passed since the last response, so uncached input rates apply (valid for 10 minutes)',
+  )
+})
+
+test('unlockMessage: 中国語の文面', () => {
+  assert.equal(
+    unlockMessage({ kind: 'granted', idleMinutes: 90, ttlMinutes: 10 }, 'zh-CN'),
+    '已允许下一次发送。距最后一次响应已过 90 分钟，因此将按无缓存价格计费(许可 10 分钟内有效)',
   )
 })

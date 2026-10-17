@@ -5,6 +5,7 @@
  */
 import type { Config } from './config.ts'
 import { decideGate } from './gate.ts'
+import type { Locale } from './i18n.ts'
 import { LastResponseTracker, type TimedEvent } from './last-response.ts'
 import type { Logger } from './log.ts'
 import { buildBlockNotice, NoticeThrottle, type NoticeMessage } from './notice.ts'
@@ -57,12 +58,14 @@ export interface Sentinel {
 export type BlockSettings = Pick<Config, 'idleMinutes' | 'unlockTtlMinutes' | 'dryRun'>
 
 /**
- * 設定・ロガー・時計・有効判定から入力禁止の部品を作る。
+ * 設定・ロガー・表示言語・時計・有効判定から入力禁止の部品を作る。
  * 最終応答時刻は、そのとき手元にある Session のイベント列から初回だけ読み、以後は session/event で更新する。
+ * 会話に書き込むブロック通知は `locale` (プロセスで 1 回決める。spec-ui v0.5 §F) で作る。
  */
 export function createSentinel(
   config: BlockSettings,
   log: Logger,
+  locale: Locale,
   now: () => number = Date.now,
   isActive: () => boolean = () => true,
 ): Sentinel {
@@ -81,7 +84,7 @@ export function createSentinel(
     const commandId = `cache-sentinel-${session.id}-${at}-${++noticeCounter}`
     try {
       session.append('command/run', { commandId, name: 'cache-sentinel', args: '', source: { kind: 'user' } })
-      session.append('command/done', { commandId, kind: 'error', text: buildBlockNotice({ idleMinutes, messages }) })
+      session.append('command/done', { commandId, kind: 'error', text: buildBlockNotice({ idleMinutes, messages }, locale) })
     } catch (error) {
       log.warn(`ブロック通知を会話に追加できませんでした: ${session.id}: ${String(error)}`)
     }
@@ -151,7 +154,7 @@ export function createSentinel(
         unlocks.grant(session.id, at)
         log.info(`/unlock を許可しました: ${session.id} (最終応答から ${outcome.idleMinutes} 分)`)
       }
-      return { kind: 'success', text: unlockMessage(outcome) }
+      return { kind: 'success', text: unlockMessage(outcome, locale) }
     },
 
     idleMinutesOf(session) {

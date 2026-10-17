@@ -3,7 +3,11 @@
  * 拒否したステップへ入る予定だった入力から、会話に出す文面 (`buildBlockNotice`) と、
  * 入力 0 件の連続拒否を間引く `NoticeThrottle` を提供する。
  * 副作用 (session.append) は呼び出し側が持つ。
+ * 文面は書き込み時点の表示言語 (spec-ui v0.5 §F) で作る。
  */
+
+import type { Locale } from './i18n.ts'
+import { MESSAGES } from './messages.ts'
 
 /** session.append に渡すコマンド結果ブロックの最小形。 */
 export interface NoticeBlock {
@@ -19,12 +23,9 @@ export interface NoticeMessage {
 /** 破棄した入力を 1 件あたり何文字まで載せるか。 */
 export const NOTICE_TEXT_LIMIT = 2000
 
-/** 上限を超えたときに末尾に付ける省略記号。 */
-const OMITTED = '…(以下省略)'
-
 /** 上限を超えていれば先頭 `NOTICE_TEXT_LIMIT` 文字に省略記号を付ける。 */
-function truncate(text: string): string {
-  return text.length > NOTICE_TEXT_LIMIT ? text.slice(0, NOTICE_TEXT_LIMIT) + OMITTED : text
+function truncate(text: string, omitted: string): string {
+  return text.length > NOTICE_TEXT_LIMIT ? text.slice(0, NOTICE_TEXT_LIMIT) + omitted : text
 }
 
 /**
@@ -49,12 +50,14 @@ function textOf(message: NoticeMessage): string {
  *   1 件が `NOTICE_TEXT_LIMIT` 文字を超えたら省略記号を付ける。
  * - `type` が `'text'` 以外のブロックの総数 k が 1 以上なら最後に添付の行を足す。
  * 行は `\n` で結合し、末尾に改行は付けない。
+ * `locale` は書き込み時点の表示言語 (spec-ui v0.5 §F)。
  */
-export function buildBlockNotice(input: { idleMinutes: number; messages: readonly NoticeMessage[] }): string {
-  const lines = [
-    `送信を止めました(最終応答から ${input.idleMinutes} 分。キャッシュが切れている可能性が高いため)。`,
-    '/unlock で次の 1 回を許可できます。',
-  ]
+export function buildBlockNotice(
+  input: { idleMinutes: number; messages: readonly NoticeMessage[] },
+  locale: Locale,
+): string {
+  const m = MESSAGES[locale]
+  const lines = [m.noticeBlocked(input.idleMinutes), m.noticeUnlockHint]
 
   const entries: string[] = []
   let attachments = 0
@@ -63,15 +66,15 @@ export function buildBlockNotice(input: { idleMinutes: number; messages: readonl
       if (block.type !== 'text') attachments++
     }
     const text = textOf(message)
-    if (text !== '') entries.push(truncate(text))
+    if (text !== '') entries.push(truncate(text, m.noticeOmitted))
   }
 
   if (entries.length > 0) {
-    lines.push('破棄された入力:')
+    lines.push(m.noticeDiscarded)
     lines.push(entries.join('\n\n'))
   }
   if (attachments >= 1) {
-    lines.push(`(画像などテキスト以外の添付 ${attachments} 件も破棄されました)`)
+    lines.push(m.noticeAttachments(attachments))
   }
   return lines.join('\n')
 }

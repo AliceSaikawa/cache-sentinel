@@ -3,8 +3,11 @@
  *
  * - `UnlockStore`: セッション id ごとに許可時刻(grantedAt)を保持する。永続化はしない(再起動で消える)。
  * - `decideUnlock`: `/unlock` 実行時の判定(失効中 / 失効していない / 応答なし)。
- * - `unlockMessage`: 判定結果を GUI に表示する日本語文へ変換する。
+ * - `unlockMessage`: 判定結果を GUI に表示する文へ変換する(表示言語は spec-ui v0.5 §F)。
  */
+
+import type { Locale } from './i18n.ts'
+import { MESSAGES } from './messages.ts'
 
 /** セッション id ごとの解除許可を保持する。永続化しないメモリ上のストア。 */
 export class UnlockStore {
@@ -74,14 +77,15 @@ export function decideUnlock(input: {
   return { kind: 'granted', idleMinutes: elapsedMinutes, ttlMinutes: unlockTtlMinutes }
 }
 
-/** 判定結果を GUI に表示する日本語文へ変換する(spec §4)。 */
-export function unlockMessage(outcome: UnlockOutcome): string {
+/** 判定結果を GUI に表示する文へ変換する(spec §4)。`locale` は表示言語 (spec-ui v0.5 §F)。 */
+export function unlockMessage(outcome: UnlockOutcome, locale: Locale): string {
+  const m = MESSAGES[locale]
   switch (outcome.kind) {
     case 'granted':
-      return `次の送信を許可しました。最終応答から ${outcome.idleMinutes} 分経過しているため、キャッシュなしの料金になります(許可は ${outcome.ttlMinutes} 分有効)`
+      return m.unlockGranted(outcome.idleMinutes, outcome.ttlMinutes)
     case 'fresh':
-      return `最終応答から ${outcome.idleMinutes} 分です。キャッシュは有効なのでそのまま送信できます`
+      return m.unlockFresh(outcome.idleMinutes)
     case 'no-response':
-      return 'このセッションはまだモデル応答がありません'
+      return m.unlockNoResponse
   }
 }

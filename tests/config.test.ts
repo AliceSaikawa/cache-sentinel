@@ -35,30 +35,30 @@ test('DEFAULTS は stateFile を持たない(未指定は省略可)', () => {
 
 test('undefined / null / {} は既定値で返す', () => {
   for (const raw of [undefined, null, {}]) {
-    assert.deepEqual(parseConfig(raw), { ...DEFAULTS })
+    assert.deepEqual(parseConfig(raw, 'ja'), { ...DEFAULTS })
   }
 })
 
 test('未指定なら stateFile キーを持たない', () => {
-  assert.equal('stateFile' in parseConfig(undefined), false)
-  assert.equal('stateFile' in parseConfig({ dryRun: true }), false)
+  assert.equal('stateFile' in parseConfig(undefined, 'ja'), false)
+  assert.equal('stateFile' in parseConfig({ dryRun: true }, 'ja'), false)
 })
 
 test('部分指定は既定値で補完する(整数キー)', () => {
   for (const [key, min] of INTEGER_KEYS) {
-    assert.deepEqual(parseConfig({ [key]: min }), { ...DEFAULTS, [key]: min })
+    assert.deepEqual(parseConfig({ [key]: min }, 'ja'), { ...DEFAULTS, [key]: min })
   }
 })
 
 test('部分指定は既定値で補完する(boolean キー)', () => {
   for (const key of BOOLEAN_KEYS) {
-    assert.deepEqual(parseConfig({ [key]: false }), { ...DEFAULTS, [key]: false })
+    assert.deepEqual(parseConfig({ [key]: false }, 'ja'), { ...DEFAULTS, [key]: false })
   }
 })
 
 test('部分指定は既定値で補完する(mode / stateFile)', () => {
-  assert.deepEqual(parseConfig({ mode: 'archive' }), { ...DEFAULTS, mode: 'archive' })
-  assert.deepEqual(parseConfig({ stateFile: '/tmp/state.json' }), {
+  assert.deepEqual(parseConfig({ mode: 'archive' }, 'ja'), { ...DEFAULTS, mode: 'archive' })
+  assert.deepEqual(parseConfig({ stateFile: '/tmp/state.json' }, 'ja'), {
     ...DEFAULTS,
     stateFile: '/tmp/state.json',
   })
@@ -67,7 +67,7 @@ test('部分指定は既定値で補完する(mode / stateFile)', () => {
 test('mode は MODES の全値をそのまま反映する', () => {
   assert.deepEqual(MODES, ['block', 'archive', 'both', 'off'])
   for (const mode of MODES) {
-    assert.equal(parseConfig({ mode }).mode, mode)
+    assert.equal(parseConfig({ mode }, 'ja').mode, mode)
   }
 })
 
@@ -84,26 +84,26 @@ test('全キー指定をそのまま反映する', () => {
     dryRun: true,
     stateFile: '/var/state.json',
   }
-  assert.deepEqual(parseConfig(raw), raw)
+  assert.deepEqual(parseConfig(raw, 'ja'), raw)
 })
 
 test('未知のキーは例外にする(キー名を含む)', () => {
-  assert.throws(() => parseConfig({ unknown: 1 }), /unknown/)
-  assert.throws(() => parseConfig({ idleMinutes: 5, typo: true }), /typo/)
-  assert.throws(() => parseConfig({ Mode: 'both' }), /Mode/)
-  assert.throws(() => parseConfig({ idle_minutes: 5 }), /idle_minutes/)
+  assert.throws(() => parseConfig({ unknown: 1 }, 'ja'), /unknown/)
+  assert.throws(() => parseConfig({ idleMinutes: 5, typo: true }, 'ja'), /typo/)
+  assert.throws(() => parseConfig({ Mode: 'both' }, 'ja'), /Mode/)
+  assert.throws(() => parseConfig({ idle_minutes: 5 }, 'ja'), /idle_minutes/)
 })
 
 test('オブジェクト以外は例外にする', () => {
-  assert.throws(() => parseConfig('60'), /オブジェクト/)
-  assert.throws(() => parseConfig(60), /オブジェクト/)
-  assert.throws(() => parseConfig([]), /オブジェクト/)
-  assert.throws(() => parseConfig(true), /オブジェクト/)
+  assert.throws(() => parseConfig('60', 'ja'), /オブジェクト/)
+  assert.throws(() => parseConfig(60, 'ja'), /オブジェクト/)
+  assert.throws(() => parseConfig([], 'ja'), /オブジェクト/)
+  assert.throws(() => parseConfig(true, 'ja'), /オブジェクト/)
 })
 
 test('mode が MODES 以外なら例外にする(使える値を列挙)', () => {
   for (const value of ['Block', 'none', '', true, 1, null]) {
-    assert.throws(() => parseConfig({ mode: value }), (error: unknown) => {
+    assert.throws(() => parseConfig({ mode: value }, 'ja'), (error: unknown) => {
       assert.ok(error instanceof Error)
       assert.match(error.message, /mode/)
       for (const usable of MODES) {
@@ -116,58 +116,90 @@ test('mode が MODES 以外なら例外にする(使える値を列挙)', () => 
 
 test('整数キーの型不正は例外にする(キー名を含む)', () => {
   for (const [key] of INTEGER_KEYS) {
-    assert.throws(() => parseConfig({ [key]: '60' }), new RegExp(key))
-    assert.throws(() => parseConfig({ [key]: null }), new RegExp(key))
-    assert.throws(() => parseConfig({ [key]: true }), new RegExp(key))
+    assert.throws(() => parseConfig({ [key]: '60' }, 'ja'), new RegExp(key))
+    assert.throws(() => parseConfig({ [key]: null }, 'ja'), new RegExp(key))
+    assert.throws(() => parseConfig({ [key]: true }, 'ja'), new RegExp(key))
   }
 })
 
 test('boolean キーの型不正は例外にする(キー名を含む)', () => {
   for (const key of BOOLEAN_KEYS) {
-    assert.throws(() => parseConfig({ [key]: 'true' }), new RegExp(key))
-    assert.throws(() => parseConfig({ [key]: 1 }), new RegExp(key))
-    assert.throws(() => parseConfig({ [key]: null }), new RegExp(key))
+    assert.throws(() => parseConfig({ [key]: 'true' }, 'ja'), new RegExp(key))
+    assert.throws(() => parseConfig({ [key]: 1 }, 'ja'), new RegExp(key))
+    assert.throws(() => parseConfig({ [key]: null }, 'ja'), new RegExp(key))
   }
 })
 
 test('stateFile は文字列以外を例外にする(キー名を含む)', () => {
   for (const value of [1, true, null, {}, []]) {
-    assert.throws(() => parseConfig({ stateFile: value }), /stateFile/)
+    assert.throws(() => parseConfig({ stateFile: value }, 'ja'), /stateFile/)
   }
-  assert.equal(parseConfig({ stateFile: '' }).stateFile, '')
+  assert.equal(parseConfig({ stateFile: '' }, 'ja').stateFile, '')
 })
 
 test('有限の整数でない数値は例外にする(キー名を含む)', () => {
   for (const [key] of INTEGER_KEYS) {
-    assert.throws(() => parseConfig({ [key]: 1.5 }), new RegExp(key))
-    assert.throws(() => parseConfig({ [key]: Number.NaN }), new RegExp(key))
-    assert.throws(() => parseConfig({ [key]: Number.POSITIVE_INFINITY }), new RegExp(key))
-    assert.throws(() => parseConfig({ [key]: Number.NEGATIVE_INFINITY }), new RegExp(key))
+    assert.throws(() => parseConfig({ [key]: 1.5 }, 'ja'), new RegExp(key))
+    assert.throws(() => parseConfig({ [key]: Number.NaN }, 'ja'), new RegExp(key))
+    assert.throws(() => parseConfig({ [key]: Number.POSITIVE_INFINITY }, 'ja'), new RegExp(key))
+    assert.throws(() => parseConfig({ [key]: Number.NEGATIVE_INFINITY }, 'ja'), new RegExp(key))
   }
 })
 
 test('範囲外は例外にする(キー名を含む)', () => {
   for (const [key, min] of INTEGER_KEYS) {
-    assert.throws(() => parseConfig({ [key]: min - 1 }), new RegExp(key))
-    assert.throws(() => parseConfig({ [key]: 0 }), new RegExp(key))
-    assert.throws(() => parseConfig({ [key]: -5 }), new RegExp(key))
+    assert.throws(() => parseConfig({ [key]: min - 1 }, 'ja'), new RegExp(key))
+    assert.throws(() => parseConfig({ [key]: 0 }, 'ja'), new RegExp(key))
+    assert.throws(() => parseConfig({ [key]: -5 }, 'ja'), new RegExp(key))
   }
 })
 
 test('checkIntervalSeconds は 10 未満を例外にする', () => {
-  assert.throws(() => parseConfig({ checkIntervalSeconds: 9 }), /checkIntervalSeconds/)
+  assert.throws(() => parseConfig({ checkIntervalSeconds: 9 }, 'ja'), /checkIntervalSeconds/)
 })
 
 test('境界値(下限ちょうど)は受け入れる', () => {
   for (const [key, min] of INTEGER_KEYS) {
-    assert.equal(parseConfig({ [key]: min })[key as keyof typeof DEFAULTS], min)
+    assert.equal(parseConfig({ [key]: min }, 'ja')[key as keyof typeof DEFAULTS], min)
   }
 })
 
 test('既定値オブジェクトを破壊しない', () => {
-  const config = parseConfig({ idleMinutes: 5, mode: 'off' })
+  const config = parseConfig({ idleMinutes: 5, mode: 'off' }, 'ja')
   config.idleMinutes = 99
   config.mode = 'both'
   assert.equal(DEFAULTS.idleMinutes, 60)
   assert.equal(DEFAULTS.mode, 'block')
+})
+
+// --- 表示言語 (spec-ui v0.5 §F) ---
+
+test('parseConfig: 日本語のエラー文面はこれまでと 1 文字も変えない', () => {
+  assert.throws(() => parseConfig('60', 'ja'), { message: '設定はオブジェクトで指定してください' })
+  assert.throws(() => parseConfig({ unknown: 1 }, 'ja'), {
+    message: '設定に未知のキーがあります: unknown',
+  })
+  assert.throws(() => parseConfig({ idleMinutes: '60' }, 'ja'), {
+    message: '設定 idleMinutes は数値で指定してください',
+  })
+  assert.throws(() => parseConfig({ idleMinutes: 0 }, 'ja'), {
+    message: '設定 idleMinutes は 1 以上で指定してください',
+  })
+  assert.throws(() => parseConfig({ mode: 'none' }, 'ja'), {
+    message: '設定 mode は block / archive / both / off のいずれかで指定してください',
+  })
+})
+
+test('parseConfig: 英語のエラー文面', () => {
+  assert.throws(() => parseConfig('60', 'en'), /Config must be an object/)
+  assert.throws(() => parseConfig({ unknown: 1 }, 'en'), /Config has an unknown key: unknown/)
+  assert.throws(() => parseConfig({ idleMinutes: '60' }, 'en'), /Config key idleMinutes must be a number/)
+  assert.throws(() => parseConfig({ idleMinutes: 0 }, 'en'), /Config key idleMinutes must be at least 1/)
+  assert.throws(() => parseConfig({ mode: 'none' }, 'en'), /Config key mode must be one of block \/ archive \/ both \/ off/)
+})
+
+test('parseConfig: 中国語のエラー文面', () => {
+  assert.throws(() => parseConfig('60', 'zh-CN'), /配置必须是对象/)
+  assert.throws(() => parseConfig({ unknown: 1 }, 'zh-CN'), /配置中有未知的键：unknown/)
+  assert.throws(() => parseConfig({ mode: 'none' }, 'zh-CN'), /配置 mode 必须为 block \/ archive \/ both \/ off 之一/)
 })

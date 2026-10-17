@@ -24,6 +24,7 @@ import {
   type RuntimeIO,
 } from '../src/index.ts'
 import type { TimedEvent } from '../src/last-response.ts'
+import type { Locale } from '../src/i18n.ts'
 import type { Logger } from '../src/log.ts'
 import { usageMessage } from '../src/mode.ts'
 import type { State } from '../src/state.ts'
@@ -50,7 +51,7 @@ function makeLogger(logs: LogLine[] = []): Logger {
 
 /** 既定値を補った設定を作る。 */
 function parseTestConfig(raw: Record<string, unknown> = {}): Config {
-  return parseConfig({ idleMinutes: 60, archiveAfterMinutes: 1440, ...raw })
+  return parseConfig({ idleMinutes: 60, archiveAfterMinutes: 1440, ...raw }, 'ja')
 }
 
 function stateWith(overrides: Partial<State> = {}): State {
@@ -85,6 +86,8 @@ interface HarnessOptions {
   archivedIds?: readonly string[]
   listSessions?: () => Promise<readonly SessionInfo[]>
   archive?: (id: string) => Promise<void>
+  /** 表示言語。既定は 'ja'(既存テストの期待値に合わせる)。 */
+  locale?: Locale
 }
 
 interface Harness {
@@ -130,7 +133,7 @@ function makeHarness(config: Config, state: State = stateWith(), options: Harnes
   }
 
   return {
-    runtime: createRuntime(config, state, deps, log, io),
+    runtime: createRuntime(config, state, deps, log, io, options.locale ?? 'ja'),
     archived,
     saved,
     logs,
@@ -195,7 +198,7 @@ test('T26b (4): /sentinel の不明な引数は error で使い方を返す', as
   const result = await h.runtime.sentinel(makeAgent('s1'), 'xyz')
 
   assert.equal(result.kind, 'error')
-  assert.equal(expectError(result), usageMessage())
+  assert.equal(expectError(result), usageMessage('ja'))
 })
 
 // ---- (5) tick のモード別の振る舞い ----
@@ -599,4 +602,20 @@ test('T26b (11): isActiveSessionError はクラス名と形で判定する', () 
   assert.equal(isActiveSessionError({ sessionId: 's1', activity: [] }), false)
   assert.equal(isActiveSessionError('実行中'), false)
   assert.equal(isActiveSessionError(undefined), false)
+})
+
+// ---- (12) 表示言語 (spec-ui v0.5 §F) ----
+
+test('T38 (12): createRuntime は渡した言語で /sentinel と /unlock の出力を返す', async () => {
+  const h = makeHarness(parseTestConfig({ mode: 'archive' }), stateWith(), { locale: 'en' })
+
+  assert.equal(
+    expectSuccess(h.runtime.unlock(makeAgent('s1'))),
+    'Input blocking is disabled (mode: archive)',
+  )
+
+  const status = expectSuccess(await h.runtime.sentinel(makeAgent('s1'), ''))
+  assert.equal(status.split('\n')[0], 'cache-sentinel: mode archive (from YAML)')
+
+  assert.equal(expectError(await h.runtime.sentinel(makeAgent('s1'), 'xyz')), usageMessage('en'))
 })

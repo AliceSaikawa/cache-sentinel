@@ -104,3 +104,17 @@
 ## W6: プラグインの停止(確定・実施済み)
 - profile の `cordis.patch.yml` に `- id: cache-sentinel` / `disabled: true` で停止。ライブ反映され、
   `pluginInventory/list` で `enabled: false, fiberPhase: null` を確認(21:30)。
+
+---
+
+# 表示言語の調査 (2026-10-17, DSH 0.2.0-rc.2)
+
+## X1: DSH の UI 言語設定 — 確認
+- DSH は UI 言語の設定を Host の user-settings 文書に `locale.preference` として持つ
+  (`$PK/dsh-client-locale/lib/types/locale-settings.d.ts:1-19`)。設定が無ければブラウザの言語に委ねる。
+- ブラウザ側では `ctx.locale.getSnapshot().active` で現在の言語 id を読める
+  (`$PK/dsh-client-locale/lib/types/client/index.d.ts:49-56,97-136`。使用例 `$PK/dsh-client-ui-settings-account/lib/client.js:4346`)。
+- 組み込みの言語 id は `zh` / `en` の 2 つ(`LOCALE_IDS`、同 `locale-settings.d.ts:10`)。
+- cache-sentinel はこれを使わず、Host は環境変数(`LC_ALL` / `LC_MESSAGES` / `LANG`)と `Intl`、
+  クライアントは `navigator.languages` で言語を決める(`docs/spec-ui.md` §F)。
+  設定の読み取り口やクライアントの `inject` を増やさないため。

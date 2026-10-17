@@ -86,7 +86,7 @@ function textOf(result: CommandResult): string {
 test('B1: 最終応答から 61 分経過すると reject を返し next を呼ばない', async () => {
   const log = makeLogger()
   const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
   const pass = nextSpy()
 
   const result = await sentinel.onPreStep(payload(session), pass.next)
@@ -105,7 +105,7 @@ test('B2: 59 分・ちょうど 60 分・応答なしは next の戻り値を素
   for (const { label, events } of cases) {
     const log = makeLogger()
     const { session } = sessionWith('s1', () => events)
-    const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+    const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
     const pass = nextSpy({ kind: 'enter', marker: label })
 
     const result = await sentinel.onPreStep(payload(session), pass.next)
@@ -119,7 +119,7 @@ test('B3: unlock で通り、その後の応答を観測しても通り続ける
   const clock = { now: NOW }
   const log = makeLogger()
   const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => clock.now)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
 
   const unlocked = sentinel.unlock(agentOf(session), INACTIVE_TEXT)
   assert.match(textOf(unlocked), /^次の送信を許可しました。/)
@@ -141,7 +141,7 @@ test('B4: unlock から unlockTtlMinutes+1 分後は reject', async () => {
   const clock = { now: NOW }
   const log = makeLogger()
   const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => clock.now)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
 
   sentinel.unlock(agentOf(session), INACTIVE_TEXT)
 
@@ -157,7 +157,7 @@ test('B5: 許可後に応答があれば、再び失効したときは reject(�
   const clock = { now: NOW }
   const log = makeLogger()
   const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => clock.now)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
 
   sentinel.unlock(agentOf(session), INACTIVE_TEXT)
 
@@ -175,7 +175,7 @@ test('B5: 許可後に応答があれば、再び失効したときは reject(�
 test('B7: dryRun では reject せず next を呼び、info ログに dryRun を出す', async () => {
   const log = makeLogger()
   const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG, dryRun: true }, log.log, () => NOW)
+  const sentinel = createSentinel({ ...CONFIG, dryRun: true }, log.log, 'ja', () => NOW)
   const pass = nextSpy()
 
   const result = await sentinel.onPreStep(payload(session), pass.next)
@@ -190,7 +190,7 @@ test('B8: snapshotEvents が例外を投げたら通り、warn を出す', async
   const { session } = sessionWith('s1', () => {
     throw new Error('boom')
   })
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
   const pass = nextSpy()
 
   const result = await sentinel.onPreStep(payload(session), pass.next)
@@ -204,7 +204,7 @@ test('snapshotEvents はセッションごとに 1 回だけ呼ばれる(キャ�
   const log = makeLogger()
   const a = sessionWith('a', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
   const b = sessionWith('b', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
 
   await sentinel.onPreStep(payload(a.session), nextSpy().next)
   await sentinel.onPreStep(payload(a.session), nextSpy().next)
@@ -219,7 +219,7 @@ test('snapshotEvents はセッションごとに 1 回だけ呼ばれる(キャ�
 test('unlock: 失効していないセッションは fresh の文面を返す', () => {
   const log = makeLogger()
   const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 5 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
 
   const result = sentinel.unlock(agentOf(session), INACTIVE_TEXT)
 
@@ -229,7 +229,7 @@ test('unlock: 失効していないセッションは fresh の文面を返す',
 test('unlock: 応答が無いセッションは no-response の文面を返す', () => {
   const log = makeLogger()
   const { session } = sessionWith('s1', () => [])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
 
   const result = sentinel.unlock(agentOf(session), INACTIVE_TEXT)
 
@@ -239,7 +239,7 @@ test('unlock: 応答が無いセッションは no-response の文面を返す',
 test('ブロック時の info ログにセッション id と経過分数が含まれる', async () => {
   const log = makeLogger()
   const { session } = sessionWith('session-xyz', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
 
   await sentinel.onPreStep(payload(session), nextSpy().next)
 
@@ -249,7 +249,7 @@ test('ブロック時の info ログにセッション id と経過分数が含�
 test('isActive が false なら失効していても next を呼ぶ', async () => {
   const log = makeLogger()
   const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW, () => false)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW, () => false)
   const pass = nextSpy()
 
   const result = await sentinel.onPreStep(payload(session), pass.next)
@@ -263,7 +263,7 @@ test('unlock: isActive が false なら inactiveText をそのまま返し、許
   let active = false
   const log = makeLogger()
   const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW, () => active)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW, () => active)
 
   const result = sentinel.unlock(agentOf(session), INACTIVE_TEXT)
 
@@ -279,7 +279,7 @@ test('unlock: isActive が false なら inactiveText をそのまま返し、許
 test('idleMinutesOf: 応答が無ければ undefined', () => {
   const log = makeLogger()
   const { session } = sessionWith('s1', () => [])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
 
   assert.equal(sentinel.idleMinutesOf(session), undefined)
 })
@@ -287,7 +287,7 @@ test('idleMinutesOf: 応答が無ければ undefined', () => {
 test('idleMinutesOf: 経過分は切り捨てる', () => {
   const log = makeLogger()
   const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE - 59_999 }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
 
   assert.equal(sentinel.idleMinutesOf(session), 61)
 })
@@ -295,7 +295,7 @@ test('idleMinutesOf: 経過分は切り捨てる', () => {
 test('idleMinutesOf: 時計巻き戻り(lastResponseAt > now)は 0', () => {
   const log = makeLogger()
   const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW + 5 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
 
   assert.equal(sentinel.idleMinutesOf(session), 0)
 })
@@ -345,7 +345,7 @@ function appendAt(appends: ReadonlyArray<{ type: string; data: unknown }>, index
 test('D-append1: ブロックすると command/run → command/done を追加し、文面は buildBlockNotice と一致する', async () => {
   const log = makeLogger()
   const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
   const messages: NoticeMessage[] = [textMessage('捨てられる入力')]
   const pass = nextSpy()
 
@@ -366,14 +366,14 @@ test('D-append1: ブロックすると command/run → command/done を追加し
   const done = appendAt(appends, 1).data as CommandDoneData
   assert.equal(done.commandId, run.commandId)
   assert.equal(done.kind, 'error')
-  assert.equal(done.text, buildBlockNotice({ idleMinutes: 61, messages }))
+  assert.equal(done.text, buildBlockNotice({ idleMinutes: 61, messages }, 'ja'))
 })
 
 test('D-append2: 2 回目のブロックでは commandId が変わる', async () => {
   const log = makeLogger()
   const clock = { now: NOW }
   const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => clock.now)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
   const messages: NoticeMessage[] = [textMessage('入力')]
 
   await sentinel.onPreStep({ ...payload(session), messages }, nextSpy().next)
@@ -391,7 +391,7 @@ test('D-append2: 2 回目のブロックでは commandId が変わる', async ()
 test('D-append3: dryRun では append しない', async () => {
   const log = makeLogger()
   const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG, dryRun: true }, log.log, () => NOW)
+  const sentinel = createSentinel({ ...CONFIG, dryRun: true }, log.log, 'ja', () => NOW)
   const pass = nextSpy()
 
   const result = await sentinel.onPreStep({ ...payload(session), messages: [textMessage('入力')] }, pass.next)
@@ -404,7 +404,7 @@ test('D-append3: dryRun では append しない', async () => {
 test('D-append4: Session に append が無くても reject する', async () => {
   const log = makeLogger()
   const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
   const pass = nextSpy()
 
   const result = await sentinel.onPreStep(payload(session), pass.next)
@@ -417,7 +417,7 @@ test('D-append5: 入力 0 件のブロックは 10 分以内なら 1 回分だ�
   const log = makeLogger()
   const clock = { now: NOW }
   const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => clock.now)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
 
   await sentinel.onPreStep(payload(session), nextSpy().next)
   assert.equal(appends.length, 2)
@@ -434,7 +434,7 @@ test('D-append5: 入力 0 件のブロックは 10 分以内なら 1 回分だ�
 test('D-append6: 入力があれば 10 分以内でも毎回追加する', async () => {
   const log = makeLogger()
   const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
   const messages: NoticeMessage[] = [textMessage('入力')]
 
   for (let i = 0; i < 3; i++) {
@@ -453,7 +453,7 @@ test('D-append7: append が例外を投げても reject を返し warn を出す
       throw new Error('disk full')
     },
   }
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
   const pass = nextSpy()
 
   const result = await sentinel.onPreStep({ ...payload(session), messages: [textMessage('入力')] }, pass.next)
@@ -468,7 +468,7 @@ test('D-append7: append が例外を投げても reject を返し warn を出す
 
 test('statusOf: セッション未読込は unknown で mode をそのまま返す', () => {
   const log = makeLogger()
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
 
   assert.deepEqual(sentinel.statusOf(undefined, 'block'), {
     mode: 'block',
@@ -484,7 +484,7 @@ test('statusOf: セッション未読込は unknown で mode をそのまま返�
 test('statusOf: 失効セッションは stale で、mode 引数をそのまま返す', () => {
   const log = makeLogger()
   const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE - 59_999 }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
 
   const status = sentinel.statusOf(session, 'both')
 
@@ -500,7 +500,7 @@ test('statusOf: unlock 後は unlocked で、期限は許可時刻 + unlockTtlMi
   const clock = { now: NOW }
   const log = makeLogger()
   const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => clock.now)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
 
   sentinel.unlock(agentOf(session), INACTIVE_TEXT)
 
@@ -516,7 +516,7 @@ test('statusOf: unlock 後は unlocked で、期限は許可時刻 + unlockTtlMi
 test('statusOf: isActive が偽なら inactive で gate も偽', () => {
   const log = makeLogger()
   const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, () => NOW, () => false)
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW, () => false)
 
   const status = sentinel.statusOf(session, 'block')
 
@@ -524,4 +524,27 @@ test('statusOf: isActive が偽なら inactive で gate も偽', () => {
   assert.equal(status.gate, false)
   assert.equal(status.state, 'inactive')
   assert.equal(status.unlockExpiresAt, null)
+})
+
+// --- 表示言語 (spec-ui v0.5 §F) ---
+
+test('D-locale: ブロック通知は createSentinel に渡した言語で書く', async () => {
+  const log = makeLogger()
+  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'en', () => NOW)
+  const messages: NoticeMessage[] = [textMessage('draft')]
+
+  await sentinel.onPreStep({ ...payload(session), messages }, nextSpy().next)
+
+  const done = appendAt(appends, 1).data as CommandDoneData
+  assert.equal(done.text, buildBlockNotice({ idleMinutes: 61, messages }, 'en'))
+  assert.ok(done.text.startsWith('Send blocked ('), done.text)
+})
+
+test('D-locale: /unlock の文面も createSentinel に渡した言語で書く', () => {
+  const log = makeLogger()
+  const { session } = sessionWith('s1', () => [])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'zh-CN', () => NOW)
+
+  assert.equal(textOf(sentinel.unlock(agentOf(session), INACTIVE_TEXT)), '本会话尚无模型响应')
 })
