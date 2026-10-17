@@ -54,8 +54,20 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      # The asset name is fixed because the README installs from
-      # releases/latest/download/cache-sentinel.tgz.
+      # `github:AliceSaikawa/cache-sentinel#<tag>` installs the committed lib/
+      # as is, so the tag must carry the same lib/ as the released tarball.
+      - name: Check that the committed lib/ matches the build
+        run: |
+          changes=$(git status --porcelain -- lib)
+          if [ -n "$changes" ]; then
+            echo "$changes"
+            git diff --stat -- lib
+            echo "lib/ is out of date: run 'pnpm run build' and commit lib/" >&2
+            exit 1
+          fi
+
+      # The asset name is fixed so that the URL of a release's tarball is
+      # predictable (releases/download/<tag>/cache-sentinel.tgz).
       - name: Pack
         run: pnpm pack --out cache-sentinel.tgz
 

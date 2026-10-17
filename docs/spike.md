@@ -181,3 +181,23 @@ dsh-web-app、dsh-headless、cordis。
 - cache-sentinel はこれを使わず、Host は環境変数(`LC_ALL` / `LC_MESSAGES` / `LANG`)と `Intl`、
   クライアントは `navigator.languages` で言語を決める(`docs/spec-ui.md` §F)。
   設定の読み取り口やクライアントの `inject` を増やさないため。
+
+---
+
+# github: 指定でのインストールの調査 (2026-10-17, DSH 0.2.0-rc.2)
+
+## G1: `dsh plugin add github:owner/repo` — 確認
+- プラグインマネージャーは spec を pnpm に渡す前に分類し、git の指定は `kind: 'git'` になる
+  (`$PK/dsh-plugin-manager/lib/types/install-spec.d.ts:6-31,49`、`index.d.ts:89`)。取得は pnpm が行う。
+- pnpm は git のパッケージをリポジトリの中身のまま使い、`prepare` などのスクリプトが無ければビルドしない。
+  cache-sentinel はスクリプトでビルドしない方針(issue #14 の候補 3 を採らない)なので、
+  `lib/index.js`・`lib/client.js` をコミットする。ビルド結果との一致は CI で検査する。
+- rustdsh は第三者のプラグインを `dsh plugin --profile "$PROFILE" add github:owner/repo` で入れる
+  (rustdsh `plugins/install.sh` 3ce1ad8 `:311-319`)。
+
+## G2: `package.json` の `icon` — 確認
+- `icon` は package.json のあるディレクトリからの相対パスで、SVG / PNG / JPEG / WebP、256 KiB 以下、
+  realpath 後もそのディレクトリ内にあること(`$PK/dsh-package-manifest/lib/types/types.d.ts:14-15`)。
+- DSH はプラグインのコードを評価せず、export した `./package.json` から表示名と icon を読む
+  (`$PK/dsh-app-boot/lib/types/package-meta.d.ts:11-24`)。cache-sentinel は `exports['./package.json']` を持つ。
+  icon の読み込みに失敗しても表示名は残る(同 `:14`)。

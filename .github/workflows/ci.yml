@@ -46,3 +46,17 @@ jobs:
 
       - name: Build
         run: pnpm run build
+
+      # lib/ is committed so that `dsh plugin add github:AliceSaikawa/cache-sentinel`
+      # gets a loadable package without building (issue #14). Fail when a fresh
+      # build of src/ differs from the committed lib/ (changed or new files).
+      - name: Check that the committed lib/ matches the build
+        shell: bash
+        run: |
+          changes=$(git status --porcelain -- lib)
+          if [ -n "$changes" ]; then
+            echo "$changes"
+            git diff --stat -- lib
+            echo "lib/ is out of date: run 'pnpm run build' and commit lib/" >&2
+            exit 1
+          fi
