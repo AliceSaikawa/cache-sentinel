@@ -186,6 +186,8 @@ node scripts/dsh-rpc.mjs --args commands/execute '{"agentId":"<sessionId>","line
 node scripts/dsh-compat.ts /var/tmp/dsh-compat 0.2.1-rc.1 0.2.1-rc.2
 ```
 
+The same check runs on GitHub Actions (`.github/workflows/dsh-compat.yml`). Start it from Actions > DSH compat > Run workflow, with the base version and the versions to check (space-separated). Dist-tags such as `next` are resolved to the version of `@deepseek-ai/dsh`. The result appears in the job summary. The job fails only on `missing`; a `diff` still needs a human to read it. On pull requests that change the script or the workflow, it runs automatically on a pinned pair (`0.2.1-rc.1` and `0.2.1-alpha.5`).
+
 See [docs/](docs/README.md) for design, specifications, and investigation details (all documents under `docs/` are in Japanese).
 
 - [docs/spec.md](docs/spec.md): Overall specification (mode switching and input blocking)

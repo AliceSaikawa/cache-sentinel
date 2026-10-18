@@ -186,6 +186,8 @@ node scripts/dsh-rpc.mjs --args commands/execute '{"agentId":"<sessionId>","line
 node scripts/dsh-compat.ts /var/tmp/dsh-compat 0.2.1-rc.1 0.2.1-rc.2
 ```
 
+同じ確認は GitHub Actions でも実行できます(`.github/workflows/dsh-compat.yml`)。Actions > DSH compat > Run workflow から、基準の版と比べる版(空白区切り)を指定して起動します。`next` などの dist-tag は `@deepseek-ai/dsh` の版に解決します。結果はジョブのサマリーに出ます。ジョブが失敗するのは `missing` があるときだけで、`diff` は人が読んで判断します。スクリプトかワークフローを変える pull request では、固定の組み合わせ(`0.2.1-rc.1` と `0.2.1-alpha.5`)で自動的に実行されます。
+
 設計・仕様・調査の詳細は [docs/](docs/README.md) を参照してください。
 
 - [docs/spec.md](docs/spec.md)：全体仕様（モード切り替え・入力禁止）
