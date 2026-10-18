@@ -201,3 +201,24 @@ dsh-web-app、dsh-headless、cordis。
 - DSH はプラグインのコードを評価せず、export した `./package.json` から表示名と icon を読む
   (`$PK/dsh-app-boot/lib/types/package-meta.d.ts:11-24`)。cache-sentinel は `exports['./package.json']` を持つ。
   icon の読み込みに失敗しても表示名は残る(同 `:14`)。
+
+---
+
+# クライアント側 `remote.commands` の inject (2026-10-18, DSH 0.2.0-rc.2)
+
+`$PK` = `<DSH のインストール先>/node_modules/@deepseek-ai`。Issue #16 の確認(web プロファイルの実機)で見つかった
+(詳細は `rdsh-check.md`。不具合は #26)。
+
+- クライアントプラグインで `remote.commands` を使うには、クライアントの `inject` に
+  `"remote"` とは別に `"remote.commands"` を宣言する必要がある(独立したサービスキー)。
+  cache-sentinel のクライアントは `inject = ['slots', 'remote']` だったため、
+  ボタン押下時の `remote.commands.execute` で例外になった。
+- 公式プラグインは両方を宣言している(例):
+  `$PK/dsh-client-ui-plan/lib/client.js:605-614`(`"remote"` と `"remote.commands"`)、
+  `$PK/dsh-client-ui-commands/lib/client.js:752-757`(同)。
+- 宣言が無い場合の例外メッセージは `cannot get property "remote.commands" without inject`
+  (`$PK/cordis/lib/index.js:676`の proxy `get` が投げる。`apply` の時点で `remote` だけを
+  読んでいると、サービスに触った時点で初めて失敗する)。
+- あわせて、`remote.commands.execute` の戻り値は union(`{ok: false, error} | {ok: true, value}`)で、
+  公式は `if (!result.ok) throw` で扱う(`$PK/dsh-client-ui-commands/lib/client.js:1068-1069`)。
+  戻り値を捨てると実行失敗が無言になる。
