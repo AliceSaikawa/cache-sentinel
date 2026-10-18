@@ -23,7 +23,7 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
    dsh plugin --profile web add github:AliceSaikawa/cache-sentinel
    ```
 
-   `web` 为示例，请指定您实际使用的配置文件（profile）名称。
+   `web` 为示例，请指定您实际使用的配置文件（profile）名称。cache-sentinel 仅在包含 Web 应用的配置文件（如 `web`、`desktop`）中运行（请参阅[支持版本与运行环境](#支持版本与运行环境)）。
 
    此方式安装 `main` 的最新代码。如需固定版本，请在末尾以 `#v<版本>` 的形式附加标签（例如 `github:AliceSaikawa/cache-sentinel#v1.2.3`）。`v0.5.0` 及更早的标签不包含已构建的 `lib/`，无法用此方式安装。也可以指定 GitHub Release 中附带的 `cache-sentinel.tgz` 的 URL 进行安装。
 
@@ -199,6 +199,9 @@ node scripts/dsh-compat.ts /var/tmp/dsh-compat 0.2.1-rc.1 0.2.1-rc.2
   - **0.2.0-rc.2**：已在真实环境确认。
   - **0.2.1-alpha.1～alpha.5、0.2.1-rc.1**：已将 cache-sentinel 使用的 API 的类型定义与实现同 0.2.0-rc.2 进行比较确认（2026-10-17）。未在真实环境确认。在 0.2.1-rc.1 中，来自浏览器以外的连接端的状态获取 API 会返回 403（该连接端仅是发送前横幅不显示）。
   - 依据请参阅 [docs/spike.md](docs/spike.md)。确认新版本时可使用 [scripts/dsh-compat.ts](scripts/dsh-compat.ts)。
+- **DSH 配置文件**：`web` 和 `desktop`，即 `dsh.profile.bundles` 中包含 `@deepseek-ai/dsh-web-app` 的配置文件（由 `web` 模板创建的配置文件也包括在内）。cache-sentinel 需要 `workspaceRegistry` 和 `connection` 服务，而只有该 bundle 提供这两项服务。
+  - 在 `headless`、`acp` 等其他配置文件中，cache-sentinel 不会启动。它会一直等待这些服务，因此输入阻止、归档、`/sentinel`、`/unlock` 均不可用。不会报错，也不会输出 `[cache-sentinel]` 的启动日志。
+  - `desktop` 与 `web` 使用相同的 bundle，但尚未在真实环境确认。npm 版 `dsh` CLI 不接受 `desktop` 配置文件的插件管理，请使用随 Desktop 应用安装的 `dsh` 命令添加。
 - **Node.js / pnpm**：标准 DSH CLI 在添加插件时会使用 `PATH` 上的 `pnpm`（通过 `github:` 或 Releases 的 `.tgz` 安装时，用户侧无需构建）
 
 ## 许可证
