@@ -222,6 +222,13 @@ dsh-web-app、dsh-headless、cordis。
 - あわせて、`remote.commands.execute` の戻り値は union(`{ok: false, error} | {ok: true, value}`)で、
   公式は `if (!result.ok) throw` で扱う(`$PK/dsh-client-ui-commands/lib/client.js:1068-1069`)。
   戻り値を捨てると実行失敗が無言になる。
+- 型(#26 の修正時に確認): `execute(agentId, line, attachments, signal?): Promise<RemoteResult<object | undefined>>`
+  (`$PK/dsh-api-session-controller/lib/types/client/sessions/remotes.d.ts:14-16`)。`RemoteResult` は
+  `{ ok: true, value } | { ok: false, error: RemoteFailure }`(`$PK/dsh-typert-protocol/lib/types/types.d.ts:67-73`)。
+  `value === undefined` はコマンドが見つからない(公式は「unknown or malformed command」を返す:
+  `$PK/dsh-client-ui-commands/lib/client.js:1070-1073`)。`error` の `code`・`message` は同じ箇所の使い方による。
+  DSH 自身の Session クライアントも `inject` に `'remote'` と `'remote.commands'` を並べている
+  (`$PK/dsh-api-session-controller/lib/types/client/index.js:10-18`)。
 
 ---
 
