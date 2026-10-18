@@ -84,6 +84,7 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
   - **官方 Web UI**：客户端插件（`lib/client.js`）会在输入框上方（`conversation.input.dock`）显示状态横幅。
     - 已过期：“缓存已过期(距最后一次响应 N 分钟)。直接发送将被阻止。”与“允许下 1 次发送(/unlock)”按钮
     - 允许中：“正允许下一次发送(将按无缓存价格计费)。剩余 M 分钟”
+    - 如果按钮无法执行 `/unlock`，警告下方会显示原因。此时请在输入框中发送 `/unlock`。
   - **M3E（`dsh-webui-m3e`）**：被阻止时的会话内通知行可以显示，但由于 M3E 不会加载其他插件的客户端包，发送前的横幅显示需要 M3E 侧的支持。
 - **状态获取 API**：
   - `GET /api/cache-sentinel.status?sessionId=<id>`（带 Connection 认证）返回会话的状态 JSON。

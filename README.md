@@ -84,6 +84,7 @@ You can check the current status and switch modes from the chat input box.
   - **Official Web UI**: The client plugin (`lib/client.js`) displays a status banner above the input box (`conversation.input.dock`).
     - Expired: "Cache expired (N minutes since the last response). Sending now will be blocked." and the "Allow the next single send (/unlock)" button
     - Unlocked: "Next send allowed (uncached input rates will apply). M min left"
+    - If the button cannot run `/unlock`, the reason appears under the warning. Send `/unlock` from the input box instead.
   - **M3E (`dsh-webui-m3e`)**: The conversation line when blocked is displayed, but because M3E does not load client bundles from other plugins, displaying the pre-send banner requires support on the M3E side.
 - **Status API**:
   - `GET /api/cache-sentinel.status?sessionId=<id>` (with Connection authentication) returns the session status JSON.
