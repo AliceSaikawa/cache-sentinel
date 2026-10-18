@@ -1,0 +1,109 @@
+name: DSH compat
+
+# Runs scripts/dsh-compat.ts, which compares the @deepseek-ai/* packages that
+# cache-sentinel uses between DSH versions (issue #12). It does not depend on
+# the code in this repository, so it is not part of every CI run:
+# - workflow_dispatch: check new DSH versions by hand (Actions > DSH compat).
+# - pull_request: when the script or this workflow changes, run it on a pinned
+#   pair of versions so that the end-to-end path (npm pack, tar, compare) is
+#   verified before merge.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Verified DSH version to compare against (version or dist-tag of @deepseek-ai/dsh)
+        required: true
+        default: 0.2.1-rc.1
+      compare:
+        description: DSH versions or dist-tags of @deepseek-ai/dsh to check, separated by spaces
+        required: true
+        default: next
+  pull_request:
+    paths:
+      - scripts/dsh-compat.ts
+      - .github/workflows/dsh-compat.yml
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    name: compare DSH packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # The script only uses Node built-ins, npm and tar, so no pnpm install.
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # Dist-tags are resolved on @deepseek-ai/dsh (the CLI) because the
+      # sub-packages carry their own, inconsistent dist-tags. `npm view` also
+      # rejects anything that is not exactly one published version, which keeps
+      # the inputs out of paths and command lines unchecked.
+      # On pull_request the inputs are empty and the pinned pair is used; its
+      # known result is 15 `same` and `dsh-client-modules` as `diff`.
+      - name: Resolve versions
+        id: versions
+        env:
+          BASE: ${{ inputs.base || '0.2.1-rc.1' }}
+          COMPARE: ${{ inputs.compare || '0.2.1-alpha.5' }}
+        run: |
+          resolve() {
+            local version
+            version=$(npm view "@deepseek-ai/dsh@$1" version) || return 1
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "'$1' does not name exactly one version of @deepseek-ai/dsh" >&2
+              return 1
+            fi
+            echo "$version"
+          }
+          base=$(resolve "$BASE")
+          compare=()
+          for spec in $COMPARE; do
+            compare+=("$(resolve "$spec")")
+          done
+          if [ ${#compare[@]} -eq 0 ]; then
+            echo "no versions to compare" >&2
+            exit 1
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "compare=${compare[*]}" >> "$GITHUB_OUTPUT"
+          echo "base: $base, compare: ${compare[*]}"
+
+      # Exit code 1 means a package could not be fetched (`missing`). A `diff`
+      # does not fail the job: it means a human should read the changes.
+      - name: Compare
+        env:
+          BASE: ${{ steps.versions.outputs.base }}
+          COMPARE: ${{ steps.versions.outputs.compare }}
+        run: |
+          set -o pipefail
+          # shellcheck disable=SC2086 # COMPARE is a space-separated list of resolved versions
+          node scripts/dsh-compat.ts "$RUNNER_TEMP/dsh-compat" "$BASE" $COMPARE | tee "$RUNNER_TEMP/dsh-compat.txt"
+
+      - name: Write the job summary
+        if: ${{ !cancelled() && steps.versions.outcome == 'success' }}
+        env:
+          BASE: ${{ steps.versions.outputs.base }}
+        run: |
+          {
+            echo "## DSH compat (base: $BASE)"
+            echo
+            if [ -f "$RUNNER_TEMP/dsh-compat.txt" ]; then
+              for verdict in same diff missing; do
+                echo "- \`$verdict\`: $(grep -c -P "\t$verdict\$" "$RUNNER_TEMP/dsh-compat.txt" || true)"
+              done
+              echo
+              echo '```'
+              cat "$RUNNER_TEMP/dsh-compat.txt"
+              echo '```'
+            else
+              echo "No output. See the Compare step log."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

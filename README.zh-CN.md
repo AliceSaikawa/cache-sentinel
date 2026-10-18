@@ -186,6 +186,8 @@ node scripts/dsh-rpc.mjs --args commands/execute '{"agentId":"<sessionId>","line
 node scripts/dsh-compat.ts /var/tmp/dsh-compat 0.2.1-rc.1 0.2.1-rc.2
 ```
 
+同样的检查也可以在 GitHub Actions 上运行（`.github/workflows/dsh-compat.yml`）。在 Actions > DSH compat > Run workflow 中指定基准版本和要比较的版本（以空格分隔）即可启动。`next` 等 dist-tag 会解析为 `@deepseek-ai/dsh` 的版本。结果显示在作业摘要中。只有出现 `missing` 时作业才会失败；`diff` 仍需人工阅读判断。修改该脚本或工作流的 pull request 会自动以固定的版本组合（`0.2.1-rc.1` 与 `0.2.1-alpha.5`）运行。
+
 设计、规格与调研详情请参阅 [docs/](docs/README.md)（`docs/` 下的文档均为日语）。
 
 - [docs/spec.md](docs/spec.md)：总体规格（模式切换与禁止输入）
