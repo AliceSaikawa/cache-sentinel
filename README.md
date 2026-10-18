@@ -20,10 +20,12 @@ You can switch at any time from the chat `/sentinel` command to `both` mode, whi
 1. Run the following single command.
 
    ```sh
-   dsh plugin --profile web add https://github.com/AliceSaikawa/cache-sentinel/releases/latest/download/cache-sentinel.tgz
+   dsh plugin --profile web add github:AliceSaikawa/cache-sentinel
    ```
 
    `web` is an example. Specify the profile name you actually use.
+
+   This installs the latest `main`. To pin a version, append a tag as `#v<version>` (for example, `github:AliceSaikawa/cache-sentinel#v1.2.3`). Tags up to and including `v0.5.0` do not contain the built `lib/`, so they cannot be installed this way. You can also install by giving the URL of the `cache-sentinel.tgz` attached to a GitHub Release.
 
 2. Restart DSH.
 
@@ -156,7 +158,9 @@ pnpm run typecheck # type check (tsc --noEmit)
 pnpm run build     # build (lib/index.js, lib/client.js)
 ```
 
-CI (`.github/workflows/ci.yml`) runs the same three commands on Linux and Windows for every push to `main` and every pull request. Releases come from `.github/workflows/release.yml` on a `v*` tag push: the tag must match the `version` in `package.json`, and the built `cache-sentinel.tgz` is attached to the GitHub Release.
+Installing with `github:` does not build anything, so the built `lib/` is committed to the repository. When you change `src/`, run `pnpm run build` and commit `lib/` as well.
+
+CI (`.github/workflows/ci.yml`) runs the same three commands on Linux and Windows for every push to `main` and every pull request, and also checks that the committed `lib/` matches the build output. Releases come from `.github/workflows/release.yml` on a `v*` tag push: the tag must match the `version` in `package.json`, and the built `cache-sentinel.tgz` is attached to the GitHub Release.
 
 To build from source and install a local `.tgz`:
 
@@ -195,7 +199,7 @@ See [docs/](docs/README.md) for design, specifications, and investigation detail
   - **0.2.0-rc.2**: verified on a real environment.
   - **0.2.1-alpha.1 to alpha.5 and 0.2.1-rc.1**: the type definitions and implementations of the APIs that cache-sentinel uses were compared against 0.2.0-rc.2 (2026-10-17). Not verified on a real environment. In 0.2.1-rc.1, the status API returns 403 for connections other than the browser (in that case the pre-send banner is simply not shown).
   - See [docs/spike.md](docs/spike.md) for the evidence. To check a newer version, run [scripts/dsh-compat.ts](scripts/dsh-compat.ts).
-- **Node.js / pnpm**: The standard DSH CLI uses `pnpm` on `PATH` when adding plugins (when installing from the Releases `.tgz`, fetching the source or building on the user side is not required)
+- **Node.js / pnpm**: The standard DSH CLI uses `pnpm` on `PATH` when adding plugins (when installing with `github:` or from the Releases `.tgz`, no build is needed on the user side)
 
 ## License
 
