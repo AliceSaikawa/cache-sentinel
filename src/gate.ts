@@ -3,22 +3,43 @@
  *
  * - 最終応答時刻が無い(新規セッション) → 通す。
  * - 失効していない(経過 <= idleMinutes) → 通す。境界ちょうどは通す。
+ * - ユーザーの送信で始まるターンの最初のステップでない → 通す。
  * - 有効な解除許可がある → 通す(許可は消費しない)。
  * - それ以外 → ブロックする。ブロック理由として経過ミリ秒を返す。
  */
 
+/**
+ * ステップの種類(spec §3)。止める対象は `user-send` だけ。
+ * - `user-send`: ターンの最初のステップで、ユーザーの送信(`source.kind === 'user'`)を含む。
+ * - `mid-turn`: ターンの 2 ステップ目以降(ツール実行の後の続きなど)。
+ * - `other-input`: ターンの最初のステップだが、ユーザーの送信を含まない(ジョブ完了・サブエージェント・ゴール・リマインダーなど)。
+ */
+export type StepKind = 'user-send' | 'mid-turn' | 'other-input'
+
+/**
+ * `agent/pre-step` のステップ番号と入力の出どころからステップの種類を決める。
+ * DSH はターンごとにステップを 1 から数える。
+ * @param step - ターン内のステップ番号。
+ * @param sourceKinds - そのステップに入る入力の `source.kind`。
+ */
+export function classifyStep(step: number, sourceKinds: readonly string[]): StepKind {
+  if (step > 1) return 'mid-turn'
+  return sourceKinds.includes('user') ? 'user-send' : 'other-input'
+}
+
 /** ゲートの判定結果。block は拒否すべきことを表す(呼び出し側が next() を呼ばない)。 */
 export type GateDecision =
-  | { kind: 'pass'; reason: 'no-response' | 'fresh' | 'unlocked' }
+  | { kind: 'pass'; reason: 'no-response' | 'fresh' | Exclude<StepKind, 'user-send'> | 'unlocked' }
   | { kind: 'block'; idleMs: number }
 
-/** decideGate の入力。すべてエポックミリ秒の時刻。 */
+/** decideGate の入力。時刻はすべてエポックミリ秒。 */
 export interface GateInput {
   now: number
   lastResponseAt: number | undefined
   idleMinutes: number
   grantedAt: number | undefined
   unlockTtlMinutes: number
+  stepKind: StepKind
 }
 
 /**
@@ -60,11 +81,12 @@ export function isGrantValid(input: {
  * ゲートを判定する(spec §3)。判定は次の順で行う。
  * 1. lastResponseAt が undefined → pass/no-response(新規セッション)。
  * 2. 経過 <= idleMinutes 分 → pass/fresh。
- * 3. 有効な解除許可がある → pass/unlocked。
- * 4. それ以外 → block(idleMs = 経過)。
+ * 3. stepKind が user-send でない → pass/mid-turn または pass/other-input。
+ * 4. 有効な解除許可がある → pass/unlocked。
+ * 5. それ以外 → block(idleMs = 経過)。
  */
 export function decideGate(input: GateInput): GateDecision {
-  const { now, lastResponseAt, idleMinutes, grantedAt, unlockTtlMinutes } = input
+  const { now, lastResponseAt, idleMinutes, grantedAt, unlockTtlMinutes, stepKind } = input
 
   if (lastResponseAt === undefined) {
     return { kind: 'pass', reason: 'no-response' }
@@ -73,6 +95,10 @@ export function decideGate(input: GateInput): GateDecision {
   const idle = elapsedMs(now, lastResponseAt)
   if (idle <= idleMinutes * 60000) {
     return { kind: 'pass', reason: 'fresh' }
+  }
+
+  if (stepKind !== 'user-send') {
+    return { kind: 'pass', reason: stepKind }
   }
 
   if (isGrantValid({ now, lastResponseAt, grantedAt, unlockTtlMinutes })) {

@@ -246,3 +246,49 @@ headless などでは起動しない(README「Supported Versions and Environment
   `$PK/dsh-web-app/README.md:80` の「Desktop compositions using this bundle」。実機では未確認(#16)。
 - npm 版 CLI は `desktop` のプラグイン管理を拒否し、Desktop に同梱の `dsh` コマンドで管理する
   (`dsh/README.md:20`)。
+
+---
+
+# 止める対象の判定材料の調査 (2026-10-18, DSH 0.2.0-rc.2) — #7
+
+結論: `agent/pre-step` の payload だけで「ユーザーの送信で始まるターンの最初のステップ」を判定できる。
+ターン内の位置は `step`(ターンごとに 1 から数える)、入力の出どころは `messages[].source.kind` で分かる。
+spec.md §3 の `classifyStep` はこれに基づく。`$PK` は rc.2 の `node_modules/@deepseek-ai`。実機での確認はしていない。
+
+## P1: ターン内の位置 — `step`
+- payload は `{ agent, messages, turn, step, signal }`(`$PK/dsh-agent/lib/types/runtime-types.d.ts:304-310`)。
+- `turn()` は `step = phase.step + 1` で提案し(`$PK/dsh-agent-loop/lib/index.js:953`)、`phase.step` は
+  ドライバの開始時(`:865`)とターンの終わり(`:1038`)に 0 に戻る。そのためターンの最初のステップは常に `step === 1`。
+- 最初のステップは `target = "next-turn"` で、`next-step` の入力すべてと `next-turn` の先頭 1 件を claim する
+  (`:949`, `:103-111`)。2 ステップ目以降は `next-step` だけ(`:1006`)。アイドル中の steer も最初のステップに入る。
+- ツールの結果は Session のイベントで、`messages` には入らない。ツール実行中の context は `next-step` に足される(`:1154`)。
+  長いツール実行の後の続きは `step >= 2` で、`messages` は空か、inject された context だけ。
+- `messages` は受信箱から claim した入力だけ。runtime context(時刻など)は既定の `next()` が後から足す(`:911-918`)。
+
+## P2: 入力の出どころ — `source.kind`
+- `UserMessage` は `source: MessageSource` を必ず持つ(`$PK/dsh-llm/lib/types/message.d.ts:125-133,144-146`)。
+  `MessageSource` は `MessageSourceMap` の値の union で、各プラグインが拡張する(同 `:101-122`)。
+- 出どころごとの `kind` と入り方:
+  | 入力 | `kind` | 入り方 | 根拠 |
+  |---|---|---|---|
+  | GUI(公式・M3E)からの送信 | `user`(`rpcId` 付き) | `followup` / `steer` | `$PK/dsh-api-session-controller/lib/index.js:856-860,882-883`、`types/types.d.ts:376-382` |
+  | スキルの明示呼び出し | 本文は `user`、スキル本文は `skill-invocation` | 同じステップ | `$PK/dsh-skill/lib/types/index.d.ts:114-127` |
+  | ジョブ完了通知 | `tool-jobs` | アイドルなら `followup`、実行中は `inject` | `$PK/dsh-tool-jobs/lib/index.js:272-295` |
+  | リマインダー | `schedule` | `followup` | `$PK/dsh-schedule/lib/index.js:1585-1596` |
+  | ゴールの自動継続 | `goal` | `followup` | `$PK/dsh-goal-round-driver/lib/index.js:134-154` |
+  | 親からサブエージェントへの継続 | `agent-message` | | `$PK/dsh-subagent/lib/index.js:1970-1973`、`types/continuation-messages.d.ts:11-18` |
+  | サブエージェントから親へのメッセージ | `agent-message` | | 同 `index.js:1857-1864` |
+  | サブエージェントの完了通知(親へ) | `subagent-settled` | | 同 `types/continuation-messages.d.ts:19-33` |
+  | サブエージェントの最初の課題 | `user` | `queue` | `$PK/dsh-subagent/lib/index.js:1738-1742` |
+  | GUI からサブエージェントへの直接の送信 | `user`(`rpcId` 付き) | | 同 `:3017-3021` |
+  | 質問への遅い回答 | `user-question-reply` | `steer` | `$PK/dsh-user-questions/lib/index.js:257,582` |
+  | webhook | `webhook` | `followup` | `$PK/dsh-webhook/lib/index.js:184-190` |
+  | チームのメッセージ | `team-message` | `steer` | `$PK/dsh-experimental-agent-team/lib/index.js:914,926` |
+- サブエージェントの最初の課題は `user` だが、新しいセッション(`step/end` が無い)か、親の履歴を引き継ぐフォーク
+  (親は実行中なので最終応答が新しい)なので、失効の判定で通る。
+- `MessageSource` は「`kind` で分岐し、未知の `kind` は素通しする」使い方を想定している(`message.d.ts:121` のコメント)。
+  cache-sentinel も `user` だけを見て、それ以外(未知の `kind` を含む)を「ユーザーの送信ではない」とみなす。
+
+## 未確認
+- 0.2.1 系: `agent/pre-step` の型は変わっていない(上の「DSH 0.2.1 系との互換調査」)。`source.kind` の各値と
+  agent-loop のステップ番号の扱いは rc.2 でだけ確認した。
