@@ -198,9 +198,9 @@ See [docs/](docs/README.md) for design, specifications, and investigation detail
 ## Supported Versions and Environment
 
 - **DeepSeek Harness (DSH)**: **0.2.0-rc.2 to 0.2.1-rc.1** (including 0.2.1-alpha.1 to alpha.5)
-  - **0.2.0-rc.2**: verified on a real environment.
-  - **0.2.1-alpha.1 to alpha.5 and 0.2.1-rc.1**: the type definitions and implementations of the APIs that cache-sentinel uses were compared against 0.2.0-rc.2 (2026-10-17). Not verified on a real environment. In 0.2.1-rc.1, the status API returns 403 for connections other than the browser (in that case the pre-send banner is simply not shown).
-  - See [docs/spike.md](docs/spike.md) for the evidence. To check a newer version, run [scripts/dsh-compat.ts](scripts/dsh-compat.ts).
+  - **0.2.0-rc.2 and 0.2.1-rc.1**: verified on a real environment with DSH as released on npm (`web` profile, 2026-10-18): input blocking, `/unlock`, `/sentinel`, the archive cycle, the block notice in the conversation, and the banner above the input box. Both versions gave the same results. See [docs/dsh-version-check.md](docs/dsh-version-check.md).
+  - **0.2.1-alpha.1 to alpha.5**: not verified on a real environment. The type definitions and implementations of the APIs that cache-sentinel uses were compared against 0.2.0-rc.2 (2026-10-17). See [docs/spike.md](docs/spike.md).
+  - To check a newer version, run [scripts/dsh-compat.ts](scripts/dsh-compat.ts).
 - **DSH profiles**: `web` and `desktop`, that is, profiles whose `dsh.profile.bundles` includes `@deepseek-ai/dsh-web-app` (custom profiles created from the `web` template also qualify). cache-sentinel requires the `workspaceRegistry` and `connection` services, which only that bundle provides.
   - In other profiles such as `headless` and `acp`, cache-sentinel does not start. It keeps waiting for those services, so input blocking, archiving, `/sentinel`, and `/unlock` are all unavailable. No error is reported, and the `[cache-sentinel]` startup log line does not appear.
   - `desktop` uses the same bundle as `web` but has not been verified on a real environment. The npm `dsh` CLI rejects plugin management for the `desktop` profile, so add the plugin with the `dsh` command installed with the Desktop app.

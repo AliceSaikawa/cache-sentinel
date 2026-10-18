@@ -198,9 +198,9 @@ node scripts/dsh-compat.ts /var/tmp/dsh-compat 0.2.1-rc.1 0.2.1-rc.2
 ## 支持版本与运行环境
 
 - **DeepSeek Harness（DSH）**：**0.2.0-rc.2 ～ 0.2.1-rc.1**（包含 0.2.1-alpha.1～alpha.5）
-  - **0.2.0-rc.2**：已在真实环境确认。
-  - **0.2.1-alpha.1～alpha.5、0.2.1-rc.1**：已将 cache-sentinel 使用的 API 的类型定义与实现同 0.2.0-rc.2 进行比较确认（2026-10-17）。未在真实环境确认。在 0.2.1-rc.1 中，来自浏览器以外的连接端的状态获取 API 会返回 403（该连接端仅是发送前横幅不显示）。
-  - 依据请参阅 [docs/spike.md](docs/spike.md)。确认新版本时可使用 [scripts/dsh-compat.ts](scripts/dsh-compat.ts)。
+  - **0.2.0-rc.2、0.2.1-rc.1**：已使用 npm 发布的 DSH 在真实环境确认（`web` 配置文件，2026-10-18）。确认的功能包括输入阻止、`/unlock`、`/sentinel`、归档周期、对话中的阻止通知以及输入框上方的横幅。两个版本的结果相同。详情请参阅 [docs/dsh-version-check.md](docs/dsh-version-check.md)。
+  - **0.2.1-alpha.1～alpha.5**：未在真实环境确认。已将 cache-sentinel 使用的 API 的类型定义与实现同 0.2.0-rc.2 进行比较确认（2026-10-17）。依据请参阅 [docs/spike.md](docs/spike.md)。
+  - 确认新版本时可使用 [scripts/dsh-compat.ts](scripts/dsh-compat.ts)。
 - **DSH 配置文件**：`web` 和 `desktop`，即 `dsh.profile.bundles` 中包含 `@deepseek-ai/dsh-web-app` 的配置文件（由 `web` 模板创建的配置文件也包括在内）。cache-sentinel 需要 `workspaceRegistry` 和 `connection` 服务，而只有该 bundle 提供这两项服务。
   - 在 `headless`、`acp` 等其他配置文件中，cache-sentinel 不会启动。它会一直等待这些服务，因此输入阻止、归档、`/sentinel`、`/unlock` 均不可用。不会报错，也不会输出 `[cache-sentinel]` 的启动日志。
   - `desktop` 与 `web` 使用相同的 bundle，但尚未在真实环境确认。npm 版 `dsh` CLI 不接受 `desktop` 配置文件的插件管理，请使用随 Desktop 应用安装的 `dsh` 命令添加。

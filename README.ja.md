@@ -198,9 +198,9 @@ node scripts/dsh-compat.ts /var/tmp/dsh-compat 0.2.1-rc.1 0.2.1-rc.2
 ## 対応バージョン・動作環境
 
 - **DeepSeek Harness（DSH）**：**0.2.0-rc.2 〜 0.2.1-rc.1**（0.2.1-alpha.1〜alpha.5 を含む）
-  - **0.2.0-rc.2**：実機で確認済み。
-  - **0.2.1-alpha.1〜alpha.5・0.2.1-rc.1**：cache-sentinel が使う API の型定義と実装を 0.2.0-rc.2 と比べて確認（2026-10-17）。実機は未確認。0.2.1-rc.1 では、ブラウザ以外の接続元からの状態取得 API が 403 になる（その接続元では送信前バナーが出ないだけ）。
-  - 根拠は [docs/spike.md](docs/spike.md) を参照。新しい版が出たときの確認は [scripts/dsh-compat.ts](scripts/dsh-compat.ts) で行えます。
+  - **0.2.0-rc.2・0.2.1-rc.1**：npm で配布されている DSH の実機で確認（`web` プロファイル、2026-10-18）。確認した機能は、入力禁止・`/unlock`・`/sentinel`・アーカイブのサイクル・会話内のブロック通知・入力欄の上のバナー。2 つの版で結果は同じでした。詳細は [docs/dsh-version-check.md](docs/dsh-version-check.md) を参照。
+  - **0.2.1-alpha.1〜alpha.5**：実機は未確認。cache-sentinel が使う API の型定義と実装を 0.2.0-rc.2 と比べて確認（2026-10-17）。根拠は [docs/spike.md](docs/spike.md) を参照。
+  - 新しい版が出たときの確認は [scripts/dsh-compat.ts](scripts/dsh-compat.ts) で行えます。
 - **DSH のプロファイル**：`web` と `desktop`。`dsh.profile.bundles` に `@deepseek-ai/dsh-web-app` を含むプロファイルが対象です（`web` のテンプレートから作ったプロファイルも含みます）。cache-sentinel が使う `workspaceRegistry` と `connection` のサービスは、このバンドルにしかありません。
   - `headless`・`acp` などほかのプロファイルでは、cache-sentinel は起動しません。サービスを待ったままになるため、入力禁止・アーカイブ・`/sentinel`・`/unlock` のいずれも使えません。エラーは出ず、`[cache-sentinel]` の起動ログも出ません。
   - `desktop` は `web` と同じバンドルを使いますが、実機では未確認です。npm 版の `dsh` CLI は `desktop` プロファイルのプラグイン管理を受け付けないため、Desktop アプリと一緒に入る `dsh` コマンドで追加してください。
