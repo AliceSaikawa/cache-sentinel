@@ -115,8 +115,8 @@ You can change the settings in your profile's `cordis.patch.yml`. Omitted keys u
 
 - Evaluates before a step starts at the head of the `agent/pre-step` hook (`prepend: true`). Because it runs before automatic compaction (`dsh-compaction-basic`), a blocked step does not trigger a model call for automatic compaction either.
 - Only the first step of a turn that contains your send (a message whose `source.kind` is `user`) is blocked. The following steps pass even after the cache has expired, and may be sent without the cache:
-  - Later steps of the same turn, such as the step after a long tool run.
-  - Turns that start without your send: background job completion notifications, messages and completion notices from subagents, automatic goal continuation, reminders, and webhooks.
+  - Later steps of the same turn, such as a job completion notification or a steer you send while the turn is running. The step after a tool run also belongs here, but it is normally not judged expired at all: the last response time is refreshed by the `step/end` written when the tool finishes (see [Limitations](#limitations)).
+  - Turns that start without your send: background job completion notifications, messages and completion notices from subagents, automatic goal continuation, reminders, and webhooks (webhooks exist only in DSH 0.2.0-rc.2).
 - When an expired step passes for one of these reasons, the reason is written to the log (see [Viewing Logs](#viewing-logs)).
 - If your send enters the same step as other input (for example, a job completion notification that was waiting), the whole step is blocked and that input is discarded too.
 - Elapsed time is calculated from the timestamp of the session's last `step/end` event (including history inherited from a fork). New sessions with no model response yet, or sessions whose elapsed time is within `idleMinutes` minutes (inclusive), are allowed through.
@@ -134,7 +134,11 @@ You can change the settings in your profile's `cordis.patch.yml`. Omitted keys u
 
 - Because M3E does not load client bundles from other plugins, displaying the pre-send banner requires support on the M3E side (the in-conversation notice when blocked is displayed by the Host side alone).
 - In subagent sessions, `/unlock` cannot be executed from the GUI. Messages from the parent agent are not blocked, but a message you send directly to a subagent from the GUI is blocked if the subagent's cache has expired.
-- Input that comes from your action but is not a plain send, such as resuming a goal or answering a question after the cache has expired, is not blocked.
+- Input that comes from your action but is not a plain send is not blocked:
+  - Creating a goal with `/goal <objective>`, editing it with `/goal edit`, or resuming it. The goal runs even after the cache has expired.
+  - `/goal` with attachments. The attachments enter first as a plain send, so they are blocked and discarded, and the goal runs without them (behavior read from the code; not verified on a running DSH).
+  - Answering a question (`ask_user_question`) after the cache has expired. Blocking it would discard the answer. The question goes back to waiting for an answer, but having already answered, you are unlikely to notice that you need to answer again.
+- A step that follows a tool run longer than `idleMinutes` is sent without the cache, but the plugin does not detect it (nothing is logged). The last response time is refreshed by the `step/end` written when the tool finishes.
 - Automatic title generation (`session-title-first-prompt-llm`) calls the model independently on the first send and is outside the gate (only on the first send in new sessions or forks, and only the first message is sent).
 - The actual prompt cache lifetime depends on the provider and request contents. This plugin is an approximation based solely on elapsed time.
 

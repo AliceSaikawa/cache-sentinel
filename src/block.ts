@@ -28,8 +28,11 @@ export interface AgentLike {
 
 /** `agent/pre-step` の messages の 1 件のうち使う部分(dsh-llm の UserMessage)。 */
 export interface StepMessage extends NoticeMessage {
-  /** 入力の出どころ。ユーザーの送信は `'user'`(spike.md「止める対象の判定材料」)。 */
-  readonly source: { readonly kind: string }
+  /**
+   * 入力の出どころ。ユーザーの送信は `'user'`(spike.md「止める対象の判定材料」)。
+   * DSH の型では必須だが、欠けたメッセージ 1 件でステップ全体が判定の例外(fail-open)にならないよう任意として読む。
+   */
+  readonly source?: { readonly kind: string }
 }
 
 /** `agent/pre-step` の payload のうち使う部分。 */
@@ -111,7 +114,7 @@ export function createSentinel(
       try {
         const at = now()
         unlocks.prune(at, ttlMs)
-        sourceKinds = payload.messages.map((message) => message.source.kind)
+        sourceKinds = payload.messages.map((message) => message.source?.kind ?? '(source なし)')
         decision = decideGate({
           now: at,
           lastResponseAt: lastResponseOf(session),

@@ -263,6 +263,7 @@ spec.md §3 の `classifyStep` はこれに基づく。`$PK` は rc.2 の `node_
   (`:949`, `:103-111`)。2 ステップ目以降は `next-step` だけ(`:1006`)。アイドル中の steer も最初のステップに入る。
 - ツールの結果は Session のイベントで、`messages` には入らない。ツール実行中の context は `next-step` に足される(`:1154`)。
   長いツール実行の後の続きは `step >= 2` で、`messages` は空か、inject された context だけ。
+  ただし直前の `step/end` がツールの後に書かれるので、このステップは通常失効と判定されない(P3)。
 - `messages` は受信箱から claim した入力だけ。runtime context(時刻など)は既定の `next()` が後から足す(`:911-918`)。
 
 ## P2: 入力の出どころ — `source.kind`
@@ -272,23 +273,57 @@ spec.md §3 の `classifyStep` はこれに基づく。`$PK` は rc.2 の `node_
   | 入力 | `kind` | 入り方 | 根拠 |
   |---|---|---|---|
   | GUI(公式・M3E)からの送信 | `user`(`rpcId` 付き) | `followup` / `steer` | `$PK/dsh-api-session-controller/lib/index.js:856-860,882-883`、`types/types.d.ts:376-382` |
-  | スキルの明示呼び出し | 本文は `user`、スキル本文は `skill-invocation` | 同じステップ | `$PK/dsh-skill/lib/types/index.d.ts:114-127` |
+  | スキルの明示呼び出し | 本文は `user`(スキル本文の `skill-invocation` は cache-sentinel には見えない。下記) | | `$PK/dsh-skill/lib/types/index.d.ts:114-127` |
   | ジョブ完了通知 | `tool-jobs` | アイドルなら `followup`、実行中は `inject` | `$PK/dsh-tool-jobs/lib/index.js:272-295` |
   | リマインダー | `schedule` | `followup` | `$PK/dsh-schedule/lib/index.js:1585-1596` |
-  | ゴールの自動継続 | `goal` | `followup` | `$PK/dsh-goal-round-driver/lib/index.js:134-154` |
+  | ゴールの自動継続、`/goal` の作成・編集・再開の後のラウンド | `goal` | `followup` | `$PK/dsh-goal-round-driver/lib/index.js:134-154` |
+  | `/goal` の添付 | `user` | `followup`(ゴールのラウンドより先) | 0.2.1-rc.2 の `dsh-command-goal/lib/index.js:98-106` |
   | 親からサブエージェントへの継続 | `agent-message` | | `$PK/dsh-subagent/lib/index.js:1970-1973`、`types/continuation-messages.d.ts:11-18` |
   | サブエージェントから親へのメッセージ | `agent-message` | | 同 `index.js:1857-1864` |
   | サブエージェントの完了通知(親へ) | `subagent-settled` | | 同 `types/continuation-messages.d.ts:19-33` |
   | サブエージェントの最初の課題 | `user` | `queue` | `$PK/dsh-subagent/lib/index.js:1738-1742` |
   | GUI からサブエージェントへの直接の送信 | `user`(`rpcId` 付き) | | 同 `:3017-3021` |
   | 質問への遅い回答 | `user-question-reply` | `steer` | `$PK/dsh-user-questions/lib/index.js:257,582` |
-  | webhook | `webhook` | `followup` | `$PK/dsh-webhook/lib/index.js:184-190` |
-  | チームのメッセージ | `team-message` | `steer` | `$PK/dsh-experimental-agent-team/lib/index.js:914,926` |
+  | webhook(0.2.0-rc.2 のみ。0.2.1-rc.2 にはパッケージが無い) | `webhook` | `followup` | `$PK/dsh-webhook/lib/index.js:184-190` |
+  | チームのメッセージ | 0.2.0-rc.2 は `team-message`、0.2.1-rc.2 は `agent-message` | `steer` | `$PK/dsh-experimental-agent-team/lib/index.js:914,926`、0.2.1-rc.2 は同 `:1598-1609` |
+- スキル本文(`skill-invocation`)は、dsh-tool-skill の pre-step リスナーが `next()` の後で decision の `messages` に足す
+  (0.2.1-rc.2 の `dsh-tool-skill/lib/index.js:896-929`)。最も外側の cache-sentinel が見る `messages` には入らない。
+  ユーザーの本文(`user`)で判定が決まるので、結果は変わらない。
+- `/goal` に添付があると、`dsh-command-goal` はゴールを作ってから添付を kind `user` の別メッセージとして `followup` する
+  (0.2.1-rc.2 の `dsh-command-goal/lib/index.js:98-106,126-144`)。ラウンドの driver は、受信箱の `next-turn` に
+  他の入力があるか、エージェントが実行中なら次のラウンドを入れない(`dsh-goal-round-driver/lib/index.js:84-86,249-255`)。
+  そのため添付のターンが先に走り、失効していれば止められて添付は破棄される。エージェントが idle に戻ると
+  ラウンド(`goal`)が入り(`:223-242`)、こちらは通る。結果として添付なしでゴールが走る。コードを読んだ結果で、実機は未確認。
+- 質問への遅い回答は `user-question-reply` の `steer`(0.2.1-rc.2 の `dsh-user-questions/lib/index.js:561-583`)。
+  破棄されても質問は回答待ちのまま残る(`:511-514` は予約を解放するだけで、質問が閉じるのは `user/message` を
+  受けたとき `:255-262`。`dsh-user-questions/README.md` の Role 節「A discarded reply leaves the question answerable.」)。
 - サブエージェントの最初の課題は `user` だが、新しいセッション(`step/end` が無い)か、親の履歴を引き継ぐフォーク
   (親は実行中なので最終応答が新しい)なので、失効の判定で通る。
 - `MessageSource` は「`kind` で分岐し、未知の `kind` は素通しする」使い方を想定している(`message.d.ts:121` のコメント)。
   cache-sentinel も `user` だけを見て、それ以外(未知の `kind` を含む)を「ユーザーの送信ではない」とみなす。
 
-## 未確認
-- 0.2.1 系: `agent/pre-step` の型は変わっていない(上の「DSH 0.2.1 系との互換調査」)。`source.kind` の各値と
-  agent-loop のステップ番号の扱いは rc.2 でだけ確認した。
+## P3: `step/end` はツール結果の後に追加される(2026-10-23, 0.2.1-rc.2)
+- `turn()` のループは、pre-step(`$PK/dsh-agent-loop/lib/index.js:956`)→ `step/start`(`:970`)→
+  `await this.step(decision)`(`:980`)→ finally で `step/end`(`:992-997`)の順。
+- `step()` はモデルの応答を書いた後、同じ呼び出しの中でツールを実行する(`executeToolCalls`、`:1166`)。
+  ツールの結果(`tool/result`)は `appendToolResult`(`:691-705`)で書かれ、すべて終わってから `step()` が返る。
+  そのため `step/end` の `time` はツールの実行が終わった時刻になる。
+- `step/end` から次の pre-step までの間にあるのは、ターンを閉じるときの `agent/turn-stopping`(`:1000-1006`。
+  受信箱が空のときだけ)と、pre-step 内の system prompt の組み立て(`:907`)だけ。どちらも通常は時間がかからない。
+- ローカルのセッションログ 1 件(2026-10-23 のもの)でも、各ステップの最後の `tool/result` と `step/end` は同じか 1ms 差、
+  次の `step/start` はその約 10ms 後だった。
+- 結論: 2 ステップ目以降の pre-step では、最終応答時刻(最後の `step/end`)は直前のステップの終わりで、通常は失効していない。
+  spec.md §3 の `mid-turn` は、`step/end` の間隔が開いたときの保険にとどまる。長いツール実行の後の続きが
+  キャッシュなしで送られても、cache-sentinel は検出しない(spec.md §8)。
+
+## 0.2.1-rc.2 での確認(2026-10-23)
+P1・P2 の挙動は 0.2.1-rc.2 でも同じ(`$PK` は 0.2.1-rc.2 の `node_modules/@deepseek-ai`)。行番号は次のとおり。
+- ステップの採番: `$PK/dsh-agent-loop/lib/index.js:951-956`(`step = phase.step + 1`)、0 に戻すのは `:865`・`:1040`。
+  claim は `:103-111`、runtime context は pre-step の既定の `next()` が足す(`:906-919`)。
+- `source.kind`: GUI からの送信 `user` は `$PK/dsh-api-session-controller/lib/index.js:3224-3229`(steer / followup は
+  `:949-950`)、ジョブ `tool-jobs` は `$PK/dsh-tool-jobs/lib/index.js:278-295`、リマインダー `schedule` は
+  `$PK/dsh-schedule/lib/index.js:1594-1596`、ゴール `goal` は `$PK/dsh-goal-round-driver/lib/index.js:147`、
+  サブエージェントは `$PK/dsh-subagent/lib/index.js:446`(`agent-message`)・`:534`(`subagent-settled`)・
+  `:1461`(最初の課題 `user`)・`:3196`(GUI からの直接の送信 `user`)。
+- 版の差: 0.2.1-rc.2 には `dsh-webhook` パッケージが無い。agent-team のメッセージは `agent-message`
+  (`$PK/dsh-experimental-agent-team/lib/index.js:1598-1609`)。どちらも `user` ではないので、分類の結果は変わらない。

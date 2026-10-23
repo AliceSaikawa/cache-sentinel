@@ -551,7 +551,7 @@ async function preStepOnExpired(
   return { result, pass, appends, log }
 }
 
-test('B10: ターンの 2 ステップ目以降(長いツール実行の後の続き)は失効していても通し、通知しない', async () => {
+test('B10: ターンの 2 ステップ目以降は、直前の step/end から失効していても通し、通知しない', async () => {
   const cases: ReadonlyArray<{ label: string; messages: readonly StepMessage[] }> = [
     { label: '入力 0 件', messages: [] },
     { label: 'ジョブ完了の inject', messages: [textMessage('job done', 'tool-jobs')] },
@@ -600,6 +600,27 @@ test('B12: 最初のステップにユーザーの送信と他の入力が混ざ
   const done = appendAt(appends, 1).data as CommandDoneData
   assert.equal(done.text, buildBlockNotice({ idleMinutes: 61, messages }, 'ja'))
   assert.match(done.text, /job done\n\n続けて$/)
+})
+
+test('#7: source の無いメッセージがあっても、同じステップのユーザーの送信は止める', async () => {
+  const noSource: StepMessage = { content: [{ type: 'text', text: '出どころ不明' }] }
+  const { result, pass, log } = await preStepOnExpired({ step: 1, messages: [noSource, textMessage('続けて')] })
+
+  assert.deepEqual(result, { kind: 'reject' })
+  assert.equal(pass.calls(), 0)
+  assert.deepEqual(log.warn, [])
+})
+
+test('#7: source の無いメッセージだけの最初のステップは、ユーザーの送信ではないので通す', async () => {
+  const noSource: StepMessage = { content: [{ type: 'text', text: '出どころ不明' }] }
+  const { result, pass, log } = await preStepOnExpired({ step: 1, messages: [noSource] })
+
+  assert.equal(result, pass.decision)
+  assert.equal(pass.calls(), 1)
+  assert.deepEqual(log.warn, [])
+  assert.deepEqual(log.info, [
+    '失効していますがユーザーの送信ではないので通しました: s1 (turn 3 step 1, 入力: (source なし))',
+  ])
 })
 
 test('B7: dryRun でも、止める対象でないステップに「ブロック対象」のログは出さない', async () => {
