@@ -276,17 +276,18 @@ headless などでは起動しない(README「Supported Versions and Environment
 「引数つき 1 行」を claim(引数を受け取る形)として実行する。`input` が無いと **引数つきの行はコマンドにならず、
 普通のメッセージとしてモデルへ送られる**。判定は次の 2 か所。
 
-1. `matchEnter`(`$PK/dsh-client-ui-commands/lib/client.js:1601-1667`、`$OLD/ui-commands/package/lib/client.js:975-1022`)。
+1. `matchEnter`(`$PK/dsh-client-ui-commands/lib/client.js:1624-1673`、`$OLD/ui-commands/package/lib/client.js:975-1024`)。
    行を最初の空白で `token`(例 `/sentinel`)と残り(`archive`)に分け、登録を引く。登録が見つかっても
    `desc.input === undefined` なら `if (!bare) return void 0` で「コマンドでない」を返す
-   (rc.2 `:1665-1666`、0.2.0-rc.2 `:1016-1017`)。`input` があれば
-   `return { claim: this.leadingClaim(desc, session, token.slice(1)) }`(rc.2 `:1661-1664`、
-   0.2.0-rc.2 `:1013-1015`)で claim を返す。claim の `token` は `` `/${shown} ` ``(末尾に空白)、
+   (rc.2 `:1665`、0.2.0-rc.2 `:1016`)。`input` があれば
+   `return { claim: this.leadingClaim(desc, session, token.slice(1)) }`(rc.2 `:1661-1663`、
+   0.2.0-rc.2 `:1012-1014`)で claim を返す。claim の `token` は `` `/${shown} ` ``(末尾に空白)、
    `submit(args, ...)` は `` `/${desc.name} ` + args `` を `remote.commands.execute` に渡す
-   (rc.2 `:1700-1704`、0.2.0-rc.2 `:1046-1055`)。
-2. 受け側 `SubmitMachine.onAdjudicated`(`$PK/dsh-client-ui-conversation/lib/client.js:5193-5210`、
+   (`leadingClaim` は rc.2 `:1695-1705`、0.2.0-rc.2 `:1046-1056`)。
+   Space キーと claim の復元で使う `claimOf`(rc.2 `:1601-1607`)も、`input` が無ければ claim を返さない。
+2. 受け側 `SubmitMachine.onAdjudicated`(`$PK/dsh-client-ui-conversation/lib/client.js:5193-5211`、
    `$OLD/ui-conv/package/lib/client.js:3925-3943`)。`matchEnter` の戻りが `undefined` のとき(= コマンドでない)だけ
-   `detachedEffects` に落ちて普通の送信になる(rc.2 `:5205-5209`、0.2.0-rc.2 `:3938-3942`)。
+   `detachedEffects` に落ちて普通の送信になる(rc.2 `:5206-5210`、0.2.0-rc.2 `:3938-3942`)。
    claim なら `args = argsAfter(draft, claim.token)`(rc.2 `:5203`、`argsAfter` は `:5064-5073`)を
    引数として submit する。`argsAfter` は claim の `token`(末尾に空白)で始まる行からその後ろを取る。
 
@@ -294,5 +295,18 @@ headless などでは起動しない(README「Supported Versions and Environment
   handler の `rawInput` に `" archive"`(区切りの空白を含む)が届く。`parseSentinelArgs` は trim するのでそのまま使える。
 - `recordInput` は既定 true(`$PK/dsh-commands/lib/types/index.d.ts:48-53`)。`/sentinel` は従来どおり
   `command/run` に `rawInput` が記録されてよいので渡さない。
+
+`input` を付けると、入力欄での見え方も次のように変わる(コードで確認。実機では未確認)。
+- `hint` は補完の候補ではなく、入力欄のプレースホルダになる。claim 中で `/sentinel ` の後ろが空のあいだだけ
+  `hint` を表示する(`$PK/dsh-client-ui-conversation/lib/client.js:18963-18971`、0.2.0-rc.2 は
+  `$OLD/ui-conv/package/lib/client.js:17418`)。型の doc も "Placeholder shown before the user supplies
+  free-form input"(`types.d.ts:21`)。`hint.<コマンド名>` の翻訳が無いので、登録した文字列がそのまま出る(`:18968-18970`)。
+- メニューから選ぶと、その場では実行されず claim(引数の入力待ち)になる(`dispatch`、rc.2 `:1578`)。
+  `input` が無いコマンドはその場で実行される(rc.2 `:1579-1584`)。
+- 行の途中で打った `/` のメニューから外れる。候補一覧は `hint` のある行を、`position` が `"leading"` のときだけ残す
+  (`candidates`、rc.2 `:1541`・`:1554`、0.2.0-rc.2 `:906`・`:919`)。`position` は `/` が行の最初の空白以外の文字なら
+  `"leading"`、そうでなければ `"inline"`(`$PK/dsh-client-ui-input-trigger/lib/client.js:803`)。
+  `/sentinel` を文中に挿す使い方は想定しないので、影響は小さい。
 - `/unlock` は引数を取らない。`input` が無いコマンドは bare な入力で `runDetached` に落ちて実行される
-  (rc.2 `:1667-1673`)ので現状のままで入力欄から使える。`input` を足すと claim になり、引数の解釈が増えるだけ。**変更しない。**
+  (rc.2 `:1666-1671`)ので現状のままで入力欄から使える。`input` を足すと、メニューで選んだ後にもう一度 Enter が要り、
+  行の途中の `/` メニューにも出なくなるだけで得るものが無い。**変更しない。**

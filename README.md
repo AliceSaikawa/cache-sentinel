@@ -68,7 +68,7 @@ You can check the current status and switch modes from the chat input box.
 - `/sentinel block` | `archive` | `both` | `off`: Switches the effective mode. It is saved to `$DSH_HOME/cache-sentinel/state.json` and preserved across DSH restarts (takes precedence over `mode` in YAML).
 - `/sentinel default`: Clears the mode saved via `/sentinel` and reverts to the `mode` setting in YAML.
 
-The argument is optional and is offered as a completion hint in the input box.
+The argument is optional. After you type `/sentinel ` in the input box, the choices are shown as placeholder text until you type an argument.
 
 ### `/unlock` Command
 

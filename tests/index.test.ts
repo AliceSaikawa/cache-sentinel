@@ -485,12 +485,13 @@ test('T36a (10): apply は /sentinel に input(hint)を渡し、引数つきの�
     await apply(host.ctx, { stateFile: join(dir, 'state.json'), checkIntervalSeconds: 30 })
 
     // 公式 UI は登録に input があるときだけ、引数つきの行をコマンドとして実行する
-    // (docs/spike.md Y2)。hint は候補一覧の表示に使われる必須項目。
+    // (docs/spike.md Y2)。hint は必須で、`/sentinel ` の後ろが空のあいだ入力欄にプレースホルダとして出る。
+    // #36 の修正(input の登録)を検証しているのはこのテスト。
     const sentinel = host.commandCalls.find((call) => call.name === 'sentinel')
     assert.ok(sentinel)
     assert.deepEqual(sentinel.input, { hint: '[block|archive|both|off|default]' })
 
-    // /unlock は引数を取らないので input を渡さない(渡すと claim になり、引数の解釈が増えるだけ)。
+    // /unlock は引数を取らないので input を渡さない(渡すとメニューで選んだ後にもう一度 Enter が要る。spike.md Y2)。
     const unlock = host.commandCalls.find((call) => call.name === 'unlock')
     assert.ok(unlock)
     assert.equal(unlock.input, undefined)
@@ -510,6 +511,8 @@ test('T36b (10): /sentinel の handler は rawInput の前後の空白を落と�
     const stateFile = join(dir, 'state.json')
     await apply(host.ctx, { stateFile, checkIntervalSeconds: 30 })
 
+    // 回帰テスト: 修正前の main でも通る。claim 経由で届く rawInput の形(先頭に区切りの空白)を固定し、
+    // parseSentinelArgs が trim をやめたときに気づけるようにする。
     const sentinel = host.commandCalls.find((call) => call.name === 'sentinel')
     assert.ok(sentinel)
     // claim 経由の submit は `/${name} ` + args を渡すので、rawInput は区切りの空白を含む(spike.md Y2)。
