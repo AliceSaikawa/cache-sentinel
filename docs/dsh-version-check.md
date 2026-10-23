@@ -9,7 +9,8 @@ README の対応範囲(DSH 0.2.0-rc.2〜0.2.1-rc.1)の両端の版で、cache-se
 ## 結論
 
 0.2.0-rc.2 と 0.2.1-rc.1 で、下表の項目はすべて同じ結果になった。版による違いは見つからなかった。
-どちらの版でも、既知の不具合(#26・#27)と、今回見つかった `/sentinel <引数>` の不具合(後述)が同じように出た。
+どちらの版でも、既知の不具合(#26・#27)と、今回見つかった `/sentinel <引数>` の不具合([#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)、後述)が同じように出た。
+確認に使った cache-sentinel は main の `86a77f6` で、#26 の修正([#34](https://github.com/AliceSaikawa/cache-sentinel/pull/34)、main の `dd07050`)より前のビルド。
 
 | 項目 | 0.2.0-rc.2 | 0.2.1-rc.1 |
 |---|---|---|
@@ -21,8 +22,8 @@ README の対応範囲(DSH 0.2.0-rc.2〜0.2.1-rc.1)の両端の版で、cache-se
 | archive のサイクル: 基準時刻後に動いたセッションをアーカイブ、手動解除の検出、猶予後の再アーカイブ(A1・A5・C1) | 動作 | 動作 |
 | ブロック通知: `command/run` と `command/done` を書き、破棄した入力を含める(D1) | 動作(表示は #27 のとおり折りたたみの中) | 同左 |
 | 入力欄の上のバナー: 失効中は警告とボタン、`/unlock` 後は「許可中」(E2 の表示) | 動作 | 動作 |
-| バナーのボタン「次の 1 回を許可(/unlock)」 | 動かない(#26。main には修正が未マージ) | 同左 |
-| 状態取得 API(E1): 認証なし 401、`sessionId` なし 400、Cookie 付きは 200 | 動作 | 動作 |
+| バナーのボタン「次の 1 回を許可(/unlock)」 | 動かない(#26。確認に使った `86a77f6` では動かない。[#34](https://github.com/AliceSaikawa/cache-sentinel/pull/34) で修正済みで、修正後は 0.2.0-rc.2 の実機で確認) | 動かない(同左。修正後のボタンは未確認) |
+| 状態取得 API(E1): 認証なし 401、`sessionId` なし 400、Cookie 付きは 200(Cookie の種類は下の「0.2.1-rc.1 の 403 について」) | 動作 | 動作 |
 
 ## 環境
 
@@ -56,8 +57,8 @@ README の対応範囲(DSH 0.2.0-rc.2〜0.2.1-rc.1)の両端の版で、cache-se
    セッションログには `agent/inbox/spliced`(入力を受信箱から外す)、`turn/start`、`command/run`(`name: "cache-sentinel"`)、
    `command/done`(`kind: "error"`、本文に「送信を止めました…」と破棄された入力)、`turn/end`(`kind: "blocked"`)の順に並ぶ。
    `step/start` は無く、モックにもリクエストは届かない。
-4. バナーのボタンを押しても何も起きない(`command/run` も状態の変化も無い)。#26 の不具合で、修正(`fix/issue-26-unlock-button`)は
-   この時点で main に入っていない。
+4. バナーのボタンを押しても何も起きない(`command/run` も状態の変化も無い)。#26 の不具合。確認に使った `86a77f6` には修正が入っていない。
+   修正はその後 [#34](https://github.com/AliceSaikawa/cache-sentinel/pull/34) で main(`dd07050`)に入った。#34 の実機確認は 0.2.0-rc.2 だけで、0.2.1-rc.1 で修正後のボタンは確かめていない。
 5. 入力欄に `/unlock` と入れて Enter を 1 回押した。`command/done` は「次の送信を許可しました。最終応答から N 分経過しているため、
    キャッシュなしの料金になります(許可は 10 分有効)」。状態 API は `state: "unlocked"` と `unlockExpiresAt`。
    30 秒のポーリングのあと、バナーは「次の送信を許可中(キャッシュなしの料金になります)。あと 10 分」になり、ボタンは消える。
@@ -75,15 +76,26 @@ README の対応範囲(DSH 0.2.0-rc.2〜0.2.1-rc.1)の両端の版で、cache-se
     `bogus` は使い方を返す(`kind: "error"`)。
 13. 状態 API を curl で呼んだ。Cookie なしは `401 unauthorized`、Cookie 付きで `sessionId` なしは
     `400 missing sessionId query parameter`、Cookie 付きで `sessionId` ありは 200 で、ブラウザからの取得と同じ JSON を返す。
+    付けた Cookie の種類(ブラウザ用か API 用か)は記録に残っていない(下記)。
 
 ブロック通知の行はどちらの版でも DOM にあり、全文が入っている。ただし、ブロックされた turn の折りたたみの中にあるため
 `innerText` は空で、最初は見えない(#27 のとおり)。
 
 ## 0.2.1-rc.1 の 403 について(README の記述を訂正)
 
-これまでの README は「0.2.1-rc.1 では、ブラウザ以外の接続元からの状態取得 API が 403 になる」と書いていた。実機では、
-Cookie 付きの curl でも 200 が返った。rc.1 が 403 を返すのは owner 以外の Peer だが、rc.1 の配布物では HTTP で来る
-リクエストの Peer がすべて owner なので、この 403 は配布物のままでは起きない。根拠は [spike.md](spike.md) の rc.1 の項目 5。README はこれに合わせて直した。
+これまでの README は「0.2.1-rc.1 では、ブラウザ以外の接続元からの状態取得 API が 403 になる」と書いていた。
+README からこの記述を消した根拠は、実機の結果ではなくコードを読んだ結果で、[spike.md](spike.md) の rc.1 の項目 5 にある。
+rc.1 が 403 を返すのは owner 以外の Peer だが、rc.1 の配布物では HTTP で来るリクエストの Peer がすべて owner なので、
+この 403(exact route 固有のもの)は配布物のままでは起きない。Host/Origin の検査による 403 はこれとは別で、起きうる。
+
+実機で確かめたことと、コードを読んだだけのことは次のとおり分かれる。
+
+- 実機: Cookie 付きの curl で 200 が返った(手順 13)。ただし、使った Cookie の種類は記録に残っていない。headless chromium が
+  持っていたブラウザ用の Cookie(payload の version 1)を付けた可能性がある。その場合、サーバーからは curl もブラウザと
+  同じ経路に見え(`admit` が `browserPeer` を返す)、ブラウザ以外の接続元の経路は通っていない。
+- コードのみ: ブラウザ以外の接続元の経路は、`/connect` に launch token を付けて受け取る API 用の Cookie(version 2)
+  → `authenticateApi` → `publishPeer` で作った Peer。この Peer も owner なので 200 になるはずだが、実機では試していない。
+  行番号は spike.md の rc.1 の項目 5。
 
 ## 見つかった不具合(両方の版で同じ)
 
@@ -101,12 +113,16 @@ Cookie 付きの curl でも 200 が返った。rc.1 が 403 を返すのは own
     `ctx.commands.register` は `input` を渡していない(`src/index.ts:249-253`)。
 - 影響: README の「`/sentinel block` | `archive` | `both` | `off`」「`/sentinel default`」は、公式 UI の入力欄からは使えない。
   引数なしの `/sentinel` と `/unlock` は使える。RPC の `commands/execute` では引数つきでも動く(今回の確認はこちらで行った)。
-  版の対応範囲とは関係しないので、この PR では直さない。
+  版の対応範囲とは関係しないので、この記録の PR(#35)では直さない。
+- Issue: [#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)。修正は [#37](https://github.com/AliceSaikawa/cache-sentinel/pull/37)(この記録の時点で未マージ)。それまでの間、README 3 言語の `/sentinel` の節に、入力欄からは
+  使えないことを注記した。
 
 ## 確認していないこと
 
 - 0.2.1-alpha.1〜alpha.5 の実機。
 - `desktop` プロファイル(#16 のとおり、このマシンでは動かせない)。
 - 再起動をまたいだモードの維持(C2)、`both` モードのアーカイブ(C3)、`unlockTtlMinutes` 切れ(B4)。
+- ブラウザ以外の接続元(`/connect` で受け取る API 用の Cookie)からの状態取得 API(上記「0.2.1-rc.1 の 403 について」)。
+- 0.2.1-rc.1 での、#34 で直したバナーのボタン。
 - 実在の LLM での応答。今回はモックで、ストリームの形は最小限(テキスト 1 ブロック)。
 - 0.2.1-rc.2 以降(2026-10-18 時点の `next` は rc.2)。対応範囲を広げるかは別に扱う。

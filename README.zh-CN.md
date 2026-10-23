@@ -13,7 +13,7 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
 - **禁止输入（`block`）**：保持会话可打开和阅读，仅阻止调用模型的发送操作。若希望继续发送，可通过输入框上方的按钮或 `/unlock` 命令仅允许下一次发送。
 - **自动归档（`archive`）**：自动归档一段时间未更新的会话，将其从侧边栏隐藏并设为不可打开。
 
-您可以随时在聊天输入框中通过 `/sentinel` 命令切换到结合两者的 `both` 模式（60 分钟后禁止输入，24 小时后归档），或暂时停用功能的 `off` 模式。
+您可以随时在聊天输入框中通过 `/sentinel` 命令切换到结合两者的 `both` 模式（60 分钟后禁止输入，24 小时后归档），或暂时停用功能的 `off` 模式。（在官方 Web UI 中，带参数的 `/sentinel` 目前无法从输入框执行：[#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)。）
 
 ## 安装
 
@@ -67,6 +67,7 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
 - `/sentinel`：显示当前生效模式及其来源（通过 `/sentinel` 设置 / YAML 设置）、阈值、当前会话距最后一次响应的经过分钟数，以及 `dryRun` 状态。
 - `/sentinel block` | `archive` | `both` | `off`：切换生效模式。保存在 `$DSH_HOME/cache-sentinel/state.json` 中，DSH 重启后依然保持（优先于 YAML 中的 `mode`）。
 - `/sentinel default`：清除通过 `/sentinel` 保存的模式，恢复为 YAML 中的 `mode` 设置。
+- 注意：在官方 Web UI 中，带参数的 `/sentinel`（`block`、`archive`、`both`、`off`、`default`）目前无法从输入框执行，会作为普通消息发送（[#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)）。不带参数的 `/sentinel` 和 `/unlock` 可以使用。在修复之前，请通过 YAML 中的 `mode` 切换模式。
 
 ### `/unlock` 命令
 
@@ -198,7 +199,7 @@ node scripts/dsh-compat.ts /var/tmp/dsh-compat 0.2.1-rc.1 0.2.1-rc.2
 ## 支持版本与运行环境
 
 - **DeepSeek Harness（DSH）**：**0.2.0-rc.2 ～ 0.2.1-rc.1**（包含 0.2.1-alpha.1～alpha.5）
-  - **0.2.0-rc.2、0.2.1-rc.1**：已使用 npm 发布的 DSH 在真实环境确认（`web` 配置文件，2026-10-18）。确认的功能包括输入阻止、`/unlock`、`/sentinel`、归档周期、对话中的阻止通知以及输入框上方的横幅。两个版本的结果相同。详情请参阅 [docs/dsh-version-check.md](docs/dsh-version-check.md)。
+  - **0.2.0-rc.2、0.2.1-rc.1**：已使用 npm 发布的 DSH 在真实环境确认（`web` 配置文件，2026-10-18）。确认的功能包括输入阻止、`/unlock`、`/sentinel`（不带参数时从输入框；带参数时仅通过 RPC 的 `commands/execute`，见 [#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)）、归档周期、对话中的阻止通知以及输入框上方的横幅。两个版本的结果相同。使用的 cache-sentinel 是 main 的 `86a77f6`，早于横幅按钮的修复（[#34](https://github.com/AliceSaikawa/cache-sentinel/pull/34)），因此按钮无法使用。修复后的按钮仅在 0.2.0-rc.2 上确认过。详情请参阅 [docs/dsh-version-check.md](docs/dsh-version-check.md)。
   - **0.2.1-alpha.1～alpha.5**：未在真实环境确认。已将 cache-sentinel 使用的 API 的类型定义与实现同 0.2.0-rc.2 进行比较确认（2026-10-17）。依据请参阅 [docs/spike.md](docs/spike.md)。
   - 确认新版本时可使用 [scripts/dsh-compat.ts](scripts/dsh-compat.ts)。
 - **DSH 配置文件**：`web` 和 `desktop`，即 `dsh.profile.bundles` 中包含 `@deepseek-ai/dsh-web-app` 的配置文件（由 `web` 模板创建的配置文件也包括在内）。cache-sentinel 需要 `workspaceRegistry` 和 `connection` 服务，而只有该 bundle 提供这两项服务。

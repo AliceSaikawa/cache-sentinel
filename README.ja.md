@@ -13,7 +13,7 @@ DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古い�
 - **入力禁止（`block`）**：セッションは開いて読めるまま、モデルを呼ぶ送信だけを止めます。続けて送りたいときは、入力欄の上のボタンか `/unlock` コマンドで次の 1 回だけを許可できます。
 - **自動アーカイブ（`archive`）**：しばらく更新のないセッションを自動でアーカイブし、サイドバーから隠して開けないようにします。
 
-両方を組み合わせる `both` モード（60 分で入力禁止、24 時間でアーカイブ）や、一時的に機能を止める `off` モードへ、チャットの `/sentinel` コマンドからいつでも切り替えられます。
+両方を組み合わせる `both` モード（60 分で入力禁止、24 時間でアーカイブ）や、一時的に機能を止める `off` モードへ、チャットの `/sentinel` コマンドからいつでも切り替えられます（公式 Web UI では、引数つきの `/sentinel` は現在入力欄から実行できません。[#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)）。
 
 ## 導入
 
@@ -67,6 +67,7 @@ DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古い�
 - `/sentinel`：現在の実効モードとその出どころ（`/sentinel` で設定 / YAML の設定）、しきい値、このセッションの最終応答からの経過分、`dryRun` の状態を表示します。
 - `/sentinel block` | `archive` | `both` | `off`：実効モードを切り替えます。`$DSH_HOME/cache-sentinel/state.json` に保存され、DSH 再起動後も維持されます（YAML の `mode` より優先）。
 - `/sentinel default`：`/sentinel` で保存したモードを消去し、YAML の `mode` 設定に戻します。
+- 注意：公式 Web UI では、引数つきの `/sentinel`（`block`・`archive`・`both`・`off`・`default`）は現在入力欄から実行できず、普通のメッセージとして送られます（[#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)）。引数なしの `/sentinel` と `/unlock` は使えます。修正されるまでは、モードは YAML の `mode` で切り替えてください。
 
 ### `/unlock` コマンド
 
@@ -198,7 +199,7 @@ node scripts/dsh-compat.ts /var/tmp/dsh-compat 0.2.1-rc.1 0.2.1-rc.2
 ## 対応バージョン・動作環境
 
 - **DeepSeek Harness（DSH）**：**0.2.0-rc.2 〜 0.2.1-rc.1**（0.2.1-alpha.1〜alpha.5 を含む）
-  - **0.2.0-rc.2・0.2.1-rc.1**：npm で配布されている DSH の実機で確認（`web` プロファイル、2026-10-18）。確認した機能は、入力禁止・`/unlock`・`/sentinel`・アーカイブのサイクル・会話内のブロック通知・入力欄の上のバナー。2 つの版で結果は同じでした。詳細は [docs/dsh-version-check.md](docs/dsh-version-check.md) を参照。
+  - **0.2.0-rc.2・0.2.1-rc.1**：npm で配布されている DSH の実機で確認（`web` プロファイル、2026-10-18）。確認した機能は、入力禁止・`/unlock`・`/sentinel`（引数なしは入力欄から。引数つきは RPC の `commands/execute` からのみ。[#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)）・アーカイブのサイクル・会話内のブロック通知・入力欄の上のバナー。2 つの版で結果は同じでした。使った cache-sentinel は main の `86a77f6` で、バナーのボタンの修正（[#34](https://github.com/AliceSaikawa/cache-sentinel/pull/34)）より前のため、ボタンは動きませんでした。修正後のボタンは 0.2.0-rc.2 でだけ確認しています。詳細は [docs/dsh-version-check.md](docs/dsh-version-check.md) を参照。
   - **0.2.1-alpha.1〜alpha.5**：実機は未確認。cache-sentinel が使う API の型定義と実装を 0.2.0-rc.2 と比べて確認（2026-10-17）。根拠は [docs/spike.md](docs/spike.md) を参照。
   - 新しい版が出たときの確認は [scripts/dsh-compat.ts](scripts/dsh-compat.ts) で行えます。
 - **DSH のプロファイル**：`web` と `desktop`。`dsh.profile.bundles` に `@deepseek-ai/dsh-web-app` を含むプロファイルが対象です（`web` のテンプレートから作ったプロファイルも含みます）。cache-sentinel が使う `workspaceRegistry` と `connection` のサービスは、このバンドルにしかありません。
