@@ -119,7 +119,7 @@ You can change the settings in your profile's `cordis.patch.yml`. Omitted keys u
   - Turns that start without your send: background job completion notifications, messages and completion notices from subagents, automatic goal continuation, reminders, and webhooks (webhooks exist only in DSH 0.2.0-rc.2).
 - When an expired step passes for one of these reasons, the reason is written to the log (see [Viewing Logs](#viewing-logs)).
 - If your send enters the same step as other input (for example, a job completion notification that was waiting), the whole step is blocked and that input is discarded too.
-- Elapsed time is calculated from the timestamp of the session's last `step/end` event (including history inherited from a fork). New sessions with no model response yet, or sessions whose elapsed time is within `idleMinutes` minutes (inclusive), are allowed through.
+- Elapsed time is calculated from the timestamp of the session's last `step/end` event (including history inherited from a fork). For a child session forked by a subagent, the later of the child's creation time and its own last `step/end` is used instead of the inherited history, because such a fork happens while the parent is running. New sessions with no model response yet, or sessions whose elapsed time is within `idleMinutes` minutes (inclusive), are allowed through.
 - When a step is rejected, no API request is made and no charges are incurred. **The outgoing message that was about to enter that step is discarded**, so please type it again after unlocking (the discarded text is shown in the block notice inside the conversation).
 
 ### Archiving (`archive` / `both` Mode)

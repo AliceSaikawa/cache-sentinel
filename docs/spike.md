@@ -297,8 +297,9 @@ spec.md §3 の `classifyStep` はこれに基づく。`$PK` は rc.2 の `node_
 - 質問への遅い回答は `user-question-reply` の `steer`(0.2.1-rc.2 の `dsh-user-questions/lib/index.js:561-583`)。
   破棄されても質問は回答待ちのまま残る(`:511-514` は予約を解放するだけで、質問が閉じるのは `user/message` を
   受けたとき `:255-262`。`dsh-user-questions/README.md` の Role 節「A discarded reply leaves the question answerable.」)。
-- サブエージェントの最初の課題は `user` だが、新しいセッション(`step/end` が無い)か、親の履歴を引き継ぐフォーク
-  (親は実行中なので最終応答が新しい)なので、失効の判定で通る。
+- サブエージェントの最初の課題は `user` だが、新しいセッション(`step/end` が無い)なら失効の判定で通る。
+  親の履歴を引き継ぐ fork の子は、引き継いだ最後の `step/end` が親の 1 つ前のターンのもので古いことがあるため、
+  作成時刻を基準にする(下の「サブエージェントの fork の子の判定材料の調査」R4、#13)。
 - `MessageSource` は「`kind` で分岐し、未知の `kind` は素通しする」使い方を想定している(`message.d.ts:121` のコメント)。
   cache-sentinel も `user` だけを見て、それ以外(未知の `kind` を含む)を「ユーザーの送信ではない」とみなす。
 
@@ -337,7 +338,7 @@ P1・P2 の挙動は 0.2.1-rc.2 でも同じ(`$PK` は 0.2.1-rc.2 の `node_modu
 **この API は 0.2.0-rc.2 と 0.2.1-rc.1 にも同じ形である**(下の「版ごとの確認」)。
 spec.md §2 の lastResponseAt は、サブエージェントの fork の子に限り `header.createdAt` を基準にする。実機での確認はしていない。
 
-## Q1: 子セッションの `header` の読み方 — 確認
+## R1: 子セッションの `header` の読み方 — 確認
 - `Session.header` は `SessionHeader`(`$PK/dsh-session/lib/types/index.d.ts:150`、型は `types.d.ts:59-97`)。
 - `origin?: 'subagent'`(`types.d.ts:82`)。コメントは「サブエージェントの子として作られたセッションの粗い分類。
   継続可能であることの証明ではない」(presentation metadata)。サブエージェントの子では必ず付く
@@ -345,14 +346,14 @@ spec.md §2 の lastResponseAt は、サブエージェントの fork の子に�
 - `createdAt: number`(epoch ms。`types.d.ts:68`)。store が `meta.createdAt ?? Date.now()` で埋める
   (`$PK/dsh-session/lib/index.js:1821`)。子セッションでは親の値を引き継がず、作成時刻が入る。
 - `isSeeded: boolean`(fork の prefix を持つか。`types.d.ts:77`)。子セッションの fork / spawn は
-  `childSessionMeta` の `isSeeded` = `prepared.seed !== void 0` で決まる(`$PK/dsh-subagent/lib/index.js:346-356,1432`)。
+  `childSessionMeta` の `isSeeded` = `prepared.seed !== void 0` で決まる(`$PK/dsh-subagent/lib/index.js:346-356,1446`)。
   spawn は `prepareContinuable()` が `{}` を返すので `isSeeded: false`、fork は seed を返すので `true`
-  (`$PK/dsh-subagent-spawn-in-process/lib/index.js:33-35`、`$PK/dsh-subagent-fork-in-process/lib/index.js:45-48`)。
+  (`$PK/dsh-subagent-spawn-in-process/lib/index.js:31-33`、`$PK/dsh-subagent-fork-in-process/lib/index.js:45-48`)。
 - `header` は store が無い場合も最小の header を合成するので**常に存在する**
   (`lib/types/index.d.ts:141-150`)。ただし cache-sentinel は DSH 本体を依存に持たず、偽 Session を食わせる
   テストもあるため、実装では `header?` を任意として扱い、無ければ従来どおりにする(後方互換)。
 
-## Q2: 引き継いだ prefix と子自身のイベントの区別 — 確認
+## R2: 引き継いだ prefix と子自身のイベントの区別 — 確認
 - `ownEvents()` は `snapshotEvents(this.inheritedEventCount)`(`$PK/dsh-session/lib/index.js:1465-1467`)。
   型の説明も「Return this Session's events after its fork-inherited prefix」(`lib/types/index.d.ts:224-233`)。
 - `inheritedEventCount` は `readonly` で公開されている(`lib/types/index.d.ts:152`)ので、
@@ -367,7 +368,7 @@ spec.md §2 の lastResponseAt は、サブエージェントの fork の子に�
   `ownEvents?()` を `SessionLike` に足し、無ければ `snapshotEvents()` にフォールバックする形にする。
   `inheritedEventCount` を読んで自前で切る案は、公開フィールドを 1 つ増やす割に得るものが同じなので採らない。
 
-## Q3: 版ごとの確認 (0.2.0-rc.2 / 0.2.1-rc.1)
+## R3: 版ごとの確認 (0.2.0-rc.2 / 0.2.1-rc.1)
 `npm pack @deepseek-ai/dsh-session@<版>` を ~/AI/tmp/cs-issues/ で展開して型定義を diff した(`$PK` = 展開先 `package`)。
 
 | 項目 | 0.2.0-rc.2 | 0.2.1-rc.1 | 0.2.1-rc.2(現行) |
@@ -382,13 +383,13 @@ spec.md §2 の lastResponseAt は、サブエージェントの fork の子に�
 
 対応範囲(0.2.0-rc.2〜0.2.1-rc.1)の全版で同じ API があるため、**版による分岐は書かない**。
 
-## Q4: 子の最初のステップが止まる経路 — 確認(#13 の再現)
+## R4: 子の最初のステップが止まる経路 — 確認(#13 の再現)
 - fork の seed は「最後の `turn/end` まで」に切られる(`$PK/dsh-subagent-fork-in-process/lib/index.js:22-27`)。
   fork は親のツール実行中(= 親のターンが未完了)に起きるので、seed に入る最後の `step/end` は
   **1 つ前のターンの最後のステップ**のもの。`step/end` はツール実行の後に書かれる
-  (`$PK/dsh-agent-loop/lib/index.js:953-994,1157`)ので、fork が起きたターンの応答は seed に入らない。
+  (P3。`$PK/dsh-agent-loop/lib/index.js:980,992-997,1166`)ので、fork が起きたターンの応答は seed に入らない。
 - 子の最初の課題は `source: { kind: "user" }` で queue され(`$PK/dsh-subagent/lib/index.js:1460-1463`)、
-  最初のステップは `step === 1`(`$PK/dsh-agent-loop/lib/index.js:949-953`)。よって `classifyStep` は `user-send`。
+  最初のステップは `step === 1`(`$PK/dsh-agent-loop/lib/index.js:951-956`)。よって `classifyStep` は `user-send`。
 - そのため引き継いだ古い `step/end` で失効と判定され、拒否される。`/unlock` は親の id にしか付かない。
 - 子の `createdAt` 基準にすれば、fork は親のモデル呼び出し直後(ツール実行中)なのでキャッシュは温かく、
   判定の意味とも一致する。GUI などで古いセッションを fork した場合(`origin` 無し)は従来どおりにする。

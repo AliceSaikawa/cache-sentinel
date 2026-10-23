@@ -91,7 +91,7 @@ export type BlockSettings = Pick<Config, 'idleMinutes' | 'unlockTtlMinutes' | 'd
 function sessionViewOf(session: SessionLike): SessionView {
   if (session.header?.origin !== 'subagent' || session.header.isSeeded !== true) return {}
   return {
-    ownEvents: session.ownEvents === undefined ? [] : session.ownEvents(),
+    ownEvents: session.ownEvents?.() ?? session.snapshotEvents(),
     createdAt: session.header.createdAt,
   }
 }
