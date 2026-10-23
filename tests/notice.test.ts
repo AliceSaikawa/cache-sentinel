@@ -2,7 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   buildBlockNotice,
+  NOTICE_DEDUPE_INTERVAL_MS,
   NOTICE_TEXT_LIMIT,
+  NoticeDedupe,
+  noticeDedupeKey,
   type NoticeMessage,
 } from '../src/notice.ts'
 
@@ -109,6 +112,123 @@ test('buildBlockNotice: テキストがなく添付だけなら添付の行だ�
 test('buildBlockNotice: 改行を含む text はそのまま載せる', () => {
   const messages: NoticeMessage[] = [{ content: [{ type: 'text', text: '1 行目\n2 行目' }] }]
   assert.equal(buildBlockNotice({ idleMinutes: 75, messages }, 'ja'), `${HEAD}\n破棄された入力:\n1 行目\n2 行目`)
+})
+
+// --- 連続通知の抑制 (spec-ui §D、#30) ---
+
+const DEDUPE_INTERVAL = NOTICE_DEDUPE_INTERVAL_MS
+
+test('NoticeDedupe: 間隔は 10 分', () => {
+  assert.equal(DEDUPE_INTERVAL, 600_000)
+})
+
+test('NoticeDedupe: 初回は出す', () => {
+  const dedupe = new NoticeDedupe(DEDUPE_INTERVAL)
+  assert.equal(dedupe.shouldSend('s1', 0, '同じ文面'), true)
+})
+
+test('NoticeDedupe: 同じ文面は間隔未満なら抑え、ちょうどで出す', () => {
+  const dedupe = new NoticeDedupe(DEDUPE_INTERVAL)
+  assert.equal(dedupe.shouldSend('s1', 0, '同じ文面'), true)
+  assert.equal(dedupe.shouldSend('s1', 1, '同じ文面'), false)
+  assert.equal(dedupe.shouldSend('s1', 599_999, '同じ文面'), false)
+  assert.equal(dedupe.shouldSend('s1', 600_000, '同じ文面'), true)
+})
+
+test('NoticeDedupe: 抑えても記録時刻は変わらない', () => {
+  const dedupe = new NoticeDedupe(DEDUPE_INTERVAL)
+  assert.equal(dedupe.shouldSend('s1', 0, 'A'), true)
+  assert.equal(dedupe.shouldSend('s1', 300_000, 'A'), false)
+  // 抑えた 300_000 では更新しないので、起点は 0 のまま。
+  assert.equal(dedupe.shouldSend('s1', 599_999, 'A'), false)
+  assert.equal(dedupe.shouldSend('s1', 600_000, 'A'), true)
+})
+
+test('NoticeDedupe: 文面が変われば間隔内でもすぐ出す', () => {
+  const dedupe = new NoticeDedupe(DEDUPE_INTERVAL)
+  assert.equal(dedupe.shouldSend('s1', 0, 'A'), true)
+  assert.equal(dedupe.shouldSend('s1', 1, 'B'), true)
+  // 直前が B なので、その次の B は抑える。
+  assert.equal(dedupe.shouldSend('s1', 2, 'B'), false)
+})
+
+test('NoticeDedupe: A → B → A で A が再び出る', () => {
+  const dedupe = new NoticeDedupe(DEDUPE_INTERVAL)
+  assert.equal(dedupe.shouldSend('s1', 0, 'A'), true)
+  assert.equal(dedupe.shouldSend('s1', 1, 'B'), true)
+  assert.equal(dedupe.shouldSend('s1', 2, 'A'), true)
+  // 3 回目の A は直前が A なので抑える。
+  assert.equal(dedupe.shouldSend('s1', 3, 'A'), false)
+})
+
+test('NoticeDedupe: 文面が変わると、同じ文面の起点がそこで更新される', () => {
+  const dedupe = new NoticeDedupe(DEDUPE_INTERVAL)
+  assert.equal(dedupe.shouldSend('s1', 0, 'A'), true)
+  assert.equal(dedupe.shouldSend('s1', 500_000, 'B'), true)
+  // B の起点は 500_000、A の起点は 0。直前が B なので A は出せ、起点が 500_001 になる。
+  assert.equal(dedupe.shouldSend('s1', 500_001, 'A'), true)
+  assert.equal(dedupe.shouldSend('s1', 1_100_000, 'A'), false)
+  assert.equal(dedupe.shouldSend('s1', 1_100_001, 'A'), true)
+})
+
+test('NoticeDedupe: セッションごとに独立して判定する', () => {
+  const dedupe = new NoticeDedupe(DEDUPE_INTERVAL)
+  assert.equal(dedupe.shouldSend('s1', 0, 'A'), true)
+  assert.equal(dedupe.shouldSend('s2', 1, 'A'), true)
+  assert.equal(dedupe.shouldSend('s1', 2, 'A'), false)
+  assert.equal(dedupe.shouldSend('s2', 3, 'A'), false)
+  assert.equal(dedupe.shouldSend('s1', 600_000, 'A'), true)
+})
+
+test('NoticeDedupe: 時計が巻き戻って経過が負なら出す', () => {
+  const dedupe = new NoticeDedupe(DEDUPE_INTERVAL)
+  assert.equal(dedupe.shouldSend('s1', 600_000, 'A'), true)
+  assert.equal(dedupe.shouldSend('s1', 500_000, 'A'), true)
+})
+
+test('NoticeDedupe: 空文字の文面でも同じ規則で判定する', () => {
+  const dedupe = new NoticeDedupe(DEDUPE_INTERVAL)
+  assert.equal(dedupe.shouldSend('s1', 0, ''), true)
+  assert.equal(dedupe.shouldSend('s1', 1, ''), false)
+})
+
+test('noticeDedupeKey: 経過分を除いた部分を返す(同じ入力なら同じ鍵)', () => {
+  const messages: NoticeMessage[] = [{ content: [{ type: 'text', text: '同じ入力' }] }]
+
+  assert.equal(noticeDedupeKey(messages, 'ja'), '破棄された入力:\n同じ入力')
+  // 文面そのものは経過分で変わるが、鍵は変わらない。
+  assert.notEqual(buildBlockNotice({ idleMinutes: 61, messages }, 'ja'), buildBlockNotice({ idleMinutes: 75, messages }, 'ja'))
+  assert.equal(noticeDedupeKey(messages, 'ja'), noticeDedupeKey(messages, 'ja'))
+})
+
+test('noticeDedupeKey: 入力が違えば変わる', () => {
+  const a: NoticeMessage[] = [{ content: [{ type: 'text', text: 'A' }] }]
+  const b: NoticeMessage[] = [{ content: [{ type: 'text', text: 'B' }] }]
+
+  assert.notEqual(noticeDedupeKey(a, 'ja'), noticeDedupeKey(b, 'ja'))
+})
+
+test('noticeDedupeKey: 切り詰め後の値で比較する(2000 文字超は同じ鍵)', () => {
+  const head = 'あ'.repeat(NOTICE_TEXT_LIMIT)
+  const a: NoticeMessage[] = [{ content: [{ type: 'text', text: `${head}1` }] }]
+  const b: NoticeMessage[] = [{ content: [{ type: 'text', text: `${head}2` }] }]
+
+  assert.equal(noticeDedupeKey(a, 'ja'), noticeDedupeKey(b, 'ja'))
+})
+
+test('noticeDedupeKey: 入力がなければ空文字', () => {
+  assert.equal(noticeDedupeKey([], 'ja'), '')
+})
+
+test('noticeDedupeKey: 添付だけなら添付の行になる', () => {
+  const messages: NoticeMessage[] = [{ content: [{ type: 'image' }] }]
+  assert.equal(noticeDedupeKey(messages, 'ja'), '(画像などテキスト以外の添付 1 件も破棄されました)')
+})
+
+test('noticeDedupeKey: 表示言語ごとの文面で比較する', () => {
+  const messages: NoticeMessage[] = [{ content: [{ type: 'text', text: 'hello' }] }]
+  assert.equal(noticeDedupeKey(messages, 'en'), 'Discarded input:\nhello')
+  assert.equal(noticeDedupeKey(messages, 'zh-CN'), '已丢弃的输入：\nhello')
 })
 
 // --- 表示言語 (spec-ui v0.5 §F) ---
