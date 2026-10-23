@@ -280,6 +280,112 @@ test('noticeDedupeKey: 表示言語ごとの文面で比較する', () => {
   assert.equal(noticeDedupeKey(messages, 'zh-CN'), '已丢弃的输入：\nhello')
 })
 
+// --- #29: 破棄された入力の出どころごとの文面 (spec-ui §D) ---
+
+/**
+ * answer-guard のリマインダー相当の入力 (source.form: 'notice' + summary)。
+ * 純粋部品は境界で落とした後の形だけを見るので、ここでは `form` を持たせない
+ * (`form` を持つ生の値が来るのは block.ts の境界。tests/block.test.ts で確認する)。
+ */
+function noticeMessage(text: string, summary?: unknown, kind = 'rdsh-answer-guard'): NoticeMessage {
+  return { content: [{ type: 'text', text }], source: { kind, summary } }
+}
+
+/** モデル向けの長い英語本文(実物は spike.md「N2」)。 */
+const MODEL_TEXT =
+  'Your previous assistant message contained no visible text: it was about to end the turn with only reasoning, so the reader was shown no answer.'
+
+test('#29: summary がある入力は summary を載せ、本文は出さない', () => {
+  const messages = [noticeMessage(MODEL_TEXT, '本文なしの応答を検知したため、再出力を要求しました')]
+  assert.equal(
+    buildBlockNotice({ idleMinutes: 75, messages }, 'ja'),
+    `${HEAD}\n破棄された入力:\n本文なしの応答を検知したため、再出力を要求しました`,
+  )
+})
+
+test('#29: summary が無い入力は出どころ名だけの 1 行にする', () => {
+  const messages = [noticeMessage('自動の入力', undefined, 'tool-jobs')]
+  assert.equal(buildBlockNotice({ idleMinutes: 75, messages }, 'ja'), `${HEAD}\n破棄された入力:\n(tool-jobs からの入力)`)
+})
+
+test('#29: summary が文字列でなければ無いものとして出どころ名を出す', () => {
+  for (const summary of [undefined, null, 123, { text: 'x' }]) {
+    const messages = [noticeMessage('自動の入力', summary, 'tool-jobs')]
+    assert.equal(
+      buildBlockNotice({ idleMinutes: 75, messages }, 'ja'),
+      `${HEAD}\n破棄された入力:\n(tool-jobs からの入力)`,
+      String(summary),
+    )
+  }
+})
+
+test('#29: source が無い、または kind が user なら本文を載せる(後方互換)', () => {
+  const body: NoticeMessage = { content: [{ type: 'text', text: 'こんにちは' }] }
+  assert.equal(buildBlockNotice({ idleMinutes: 75, messages: [body] }, 'ja'), `${HEAD}\n破棄された入力:\nこんにちは`)
+
+  // kind が無くても summary があれば無視して本文を載せる(source なしと同じ扱い)。
+  const noKind: NoticeMessage = { content: [{ type: 'text', text: 'こんにちは' }], source: { summary: '説明' } }
+  assert.equal(buildBlockNotice({ idleMinutes: 75, messages: [noKind] }, 'ja'), `${HEAD}\n破棄された入力:\nこんにちは`)
+})
+
+test('#29: user と他の入力が混ざったら、それぞれの規則で 1 件ずつ並べる', () => {
+  const messages: NoticeMessage[] = [
+    noticeMessage(MODEL_TEXT, '再出力を要求しました'),
+    { content: [{ type: 'text', text: '続けて' }], source: { kind: 'user' } },
+  ]
+  assert.equal(
+    buildBlockNotice({ idleMinutes: 75, messages }, 'ja'),
+    `${HEAD}\n破棄された入力:\n再出力を要求しました\n\n続けて`,
+  )
+})
+
+test('#29: summary も長ければ 2000 文字で切り詰める', () => {
+  const summary = 'あ'.repeat(NOTICE_TEXT_LIMIT + 1)
+  const messages = [noticeMessage(MODEL_TEXT, summary)]
+  const expected = `${'あ'.repeat(NOTICE_TEXT_LIMIT)}…(以下省略)`
+  assert.equal(buildBlockNotice({ idleMinutes: 75, messages }, 'ja'), `${HEAD}\n破棄された入力:\n${expected}`)
+})
+
+test('#29: summary が空文字なら「破棄された入力」に数えない', () => {
+  const messages = [noticeMessage(MODEL_TEXT, ''), { content: [{ type: 'text', text: 'X' }] }]
+  assert.equal(buildBlockNotice({ idleMinutes: 75, messages }, 'ja'), `${HEAD}\n破棄された入力:\nX`)
+})
+
+test('#29: 添付の件数は出どころに関わらず全入力で数える', () => {
+  const messages: NoticeMessage[] = [
+    noticeMessage(MODEL_TEXT, '説明'),
+    { content: [{ type: 'image' }], source: { kind: 'user' } },
+  ]
+  assert.equal(
+    buildBlockNotice({ idleMinutes: 75, messages }, 'ja'),
+    `${HEAD}\n破棄された入力:\n説明\n(画像などテキスト以外の添付 1 件も破棄されました)`,
+  )
+})
+
+test('#29: 出どころ名の行は 3 言語でその言語になる', () => {
+  const messages = [noticeMessage('自動の入力', undefined, 'tool-jobs')]
+  assert.equal(
+    buildBlockNotice({ idleMinutes: 75, messages }, 'en').endsWith('(input from tool-jobs)'),
+    true,
+  )
+  assert.equal(
+    buildBlockNotice({ idleMinutes: 75, messages }, 'zh-CN').endsWith('(来自 tool-jobs 的输入)'),
+    true,
+  )
+  assert.equal(buildBlockNotice({ idleMinutes: 75, messages }, 'ja').endsWith('(tool-jobs からの入力)'), true)
+})
+
+test('#29: noticeDedupeKey も出どころごとの文面で比較する', () => {
+  const a = [noticeMessage(MODEL_TEXT, '説明 A')]
+  const b = [noticeMessage(MODEL_TEXT, '説明 B')]
+  const sameSummary = [noticeMessage('別の本文', '説明 A')]
+
+  assert.equal(noticeDedupeKey(a, 'ja'), '破棄された入力:\n説明 A')
+  // 本文が違っても summary が同じなら同じ鍵(モデル向けの本文は比較に影響しない)。
+  assert.equal(noticeDedupeKey(a, 'ja'), noticeDedupeKey(sameSummary, 'ja'))
+  assert.notEqual(noticeDedupeKey(a, 'ja'), noticeDedupeKey(b, 'ja'))
+})
+
 // --- 表示言語 (spec-ui v0.5 §F) ---
 
 test('buildBlockNotice: 英語の文面', () => {

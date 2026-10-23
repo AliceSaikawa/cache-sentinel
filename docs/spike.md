@@ -327,3 +327,41 @@ P1・P2 の挙動は 0.2.1-rc.2 でも同じ(`$PK` は 0.2.1-rc.2 の `node_modu
   `:1461`(最初の課題 `user`)・`:3196`(GUI からの直接の送信 `user`)。
 - 版の差: 0.2.1-rc.2 には `dsh-webhook` パッケージが無い。agent-team のメッセージは `agent-message`
   (`$PK/dsh-experimental-agent-team/lib/index.js:1598-1609`)。どちらも `user` ではないので、分類の結果は変わらない。
+
+---
+
+# 入力の出どころの `form` / `summary` の調査 (2026-10-23, DSH 0.2.1-rc.2) — #29
+
+結論: `messages[].source` には `kind` のほかに `ContextFormed`(`form` と、`form: 'notice'` のときの `summary`)が
+混ざる。`summary` は「モデル向けの本文ではなく、その入力を 1 行で説明する文」なので、破棄された入力の表示に使える。
+`$PK` = rc.2 の `node_modules/@deepseek-ai`。実機での確認はしていない。
+
+## N1: `source` の形 — `ContextFormed`
+- `UserMessage` の `source` は `MessageSource`(`$PK/dsh-llm/lib/types/message.d.ts:125-133,144-146`)。
+- `MessageSourceMap` の各値は `kind` を持ち、`ContextFormed` を混ぜられる(同 `:101-108`)。
+  `ContextFormed` は `form` で判別する union(同 `:75-93`)。
+  - `form` 省略 / `'instructions'` / `'catalog'` / `'snapshot'`(`sections`)/ `'relay'` / `'recall'` は追加フィールドなし。
+  - `form: 'notice'` のときだけ `summary: string` が必須(同 `:85-88`)。コメントは
+    「1 行の説明。行を開かずに表示する」(同 `:87`)。
+- `summary` の長さの上限は `CONTEXT_SUMMARY_MAX_CHARS = 120`(`String.length` の 120 文字)。producer は
+  `boundContextSummary()` で切る(同 `:109-120`)。cache-sentinel 側では切り詰めない(2 つ目の切り詰めを足さない)。
+- `kind` と `form` は別の軸(同 `:30-45`)。`kind` は「誰が出したか」、`form` は「どんな種類の情報か」。
+  同じ `form: 'notice'` でも `kind` は `schedule`・`tool-jobs`・`subagent-settled`・`webhook` など複数ある
+  (`$PK/dsh-agent-preset-registry/lib/typert.host.js:637` の `MessageSourceMap` 宣言)。
+- `form: 'notice'` の producer: `subagent-settled`(`$PK/dsh-agent-preset-registry/lib/typert.host.js:817`)、
+  `webhook`(同 `:637`)、`schedule` / `user-approval` / `plan-mode` / `tool-jobs` など
+  (`$PK/dsh-schedule/lib/types/runtime.d.ts:6`、`$PK/dsh-tool-jobs/lib/types/index.d.ts:17`)。
+- したがって「リマインダーの `kind` がどれか」を知る必要はない。cache-sentinel は `form` も見ず、
+  `source.summary` が文字列かどうかだけで判断できる(#29 の規則)。
+
+## N2: 対象の実例 — rdsh-answer-guard のリマインダー
+- リマインダーは `createReminder()` が作る `UserMessage` で、`source` は
+  `{ kind: 'rdsh-answer-guard', form: 'notice', summary }`(`rustdsh/plugins/rdsh-answer-guard/index.js:135-142@fc63bf2`)。
+- 本文(`content[0].text`)はモデル向けの英語の指示文 `REMINDER_TEXT`(同 `:79-82`)。これが従来は
+  「破棄された入力」に全文出ていた(rdsh-check.md「見つかった不具合・懸念」4)。
+- `summary` は表示用で、言語ごとに用意されている(同 `:59-70`。日本語は「本文なしの応答を検知したため、再出力を要求しました」)。
+  既定の `REMINDER_SOURCE_KIND` は `'rdsh-answer-guard'`(同 `:38`)。この文字列を cache-sentinel 側に
+  ハードコードはしない(#29 の規則は summary の有無だけで決まる)。
+- `.d.ts` での裏付け: `MessageSourceMap` は「merge-extensible」で、producer ごとの `kind` は各プラグインが
+  自分のモジュールで宣言する(`$PK/dsh-llm/lib/types/message.d.ts:95-100`)。未知の `kind` も
+  `MessageSource` として `messages` に入る。

@@ -17,6 +17,8 @@ export interface Messages {
   readonly noticeUnlockHint: string
   /** 破棄された入力の見出し。 */
   readonly noticeDiscarded: string
+  /** 出どころの説明文が無い入力の代わりに出す、出どころ名だけの行 (#29)。 */
+  readonly noticeInputSource: (kind: string) => string
   /** 入力が上限を超えたときの省略記号。 */
   readonly noticeOmitted: string
   /** テキスト以外の添付があったときの行。 */
@@ -96,6 +98,7 @@ const en: Messages = {
     `Send blocked (${idleMinutes} minutes since the last response, as the cache has likely expired).`,
   noticeUnlockHint: 'You can allow the next single send with /unlock.',
   noticeDiscarded: 'Discarded input:',
+  noticeInputSource: (kind) => `(input from ${kind})`,
   noticeOmitted: '…(truncated)',
   noticeAttachments: (count) => `(${count} non-text attachments such as images were also discarded)`,
 
@@ -148,6 +151,7 @@ const ja: Messages = {
     `送信を止めました(最終応答から ${idleMinutes} 分。キャッシュが切れている可能性が高いため)。`,
   noticeUnlockHint: '/unlock で次の 1 回を許可できます。',
   noticeDiscarded: '破棄された入力:',
+  noticeInputSource: (kind) => `(${kind} からの入力)`,
   noticeOmitted: '…(以下省略)',
   noticeAttachments: (count) => `(画像などテキスト以外の添付 ${count} 件も破棄されました)`,
 
@@ -200,6 +204,7 @@ const zhCN: Messages = {
     `已阻止发送(距最后一次响应 ${idleMinutes} 分钟，因为缓存很可能已过期)。`,
   noticeUnlockHint: '可用 /unlock 允许下 1 次发送。',
   noticeDiscarded: '已丢弃的输入：',
+  noticeInputSource: (kind) => `(来自 ${kind} 的输入)`,
   noticeOmitted: '…(以下省略)',
   noticeAttachments: (count) => `(另有 ${count} 条图片等非文本附件被丢弃)`,
 

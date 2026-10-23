@@ -15,9 +15,22 @@ export interface NoticeBlock {
   readonly text?: unknown
 }
 
-/** 表示対象メッセージの最小形 (`content` だけ見る)。 */
+/**
+ * 入力の出どころの最小形 (issue #29)。
+ * `source` は省ける。省いた入力はユーザーの送信と同じ扱いにする(後方互換)。
+ * `summary` は「その入力を 1 行で説明する文」で、モデル向けの本文の代わりに表示するもの
+ * (根拠は spike.md「入力の出どころの form / summary の調査」)。
+ */
+export interface NoticeSource {
+  /** 出どころの名前。`'user'` はユーザーの送信。無ければユーザーと同じ扱い(後方互換)。 */
+  readonly kind?: string
+  readonly summary?: unknown
+}
+
+/** 表示対象メッセージの最小形 (`content` と `source` だけ見る)。 */
 export interface NoticeMessage {
   readonly content: readonly NoticeBlock[]
+  readonly source?: NoticeSource
 }
 
 /** 破棄した入力を 1 件あたり何文字まで載せるか。 */
@@ -46,6 +59,20 @@ function textOf(message: NoticeMessage): string {
 }
 
 /**
+ * そのメッセージを「破棄された入力」に 1 件として載せる文面を返す (spec-ui §D、#29)。
+ * 出どころ (`source`) で決める。
+ * - `source` が無い、または `kind: 'user'` → 本文 (`text` ブロックの連結)。
+ * - それ以外で `summary` が文字列 → その summary(モデル向けの本文は出さない)。
+ * - それ以外 → 出どころ名だけの 1 行。
+ * どれも空文字なら、その入力は「破棄された入力」に数えない。
+ */
+function entryOf(message: NoticeMessage, m: Messages): string {
+  const kind = message.source?.kind
+  if (kind === undefined || kind === 'user') return textOf(message)
+  return typeof message.source?.summary === 'string' ? message.source.summary : m.noticeInputSource(kind)
+}
+
+/**
  * 比較用の「破棄された入力」の部分 (spec-ui §D)。見出し行と、入力・添付の行だけを返す。
  * 1 行目の経過分はブロックのたびに増えるので、これを除いた部分で連続通知を判定する。
  * 文面を組み立てる `buildBlockNotice` と同じ走査を使う。
@@ -58,8 +85,8 @@ function discardedPart(messages: readonly NoticeMessage[], m: Messages): string 
     for (const block of message.content) {
       if (block.type !== 'text') attachments++
     }
-    const text = textOf(message)
-    if (text !== '') entries.push(truncate(text, m.noticeOmitted))
+    const entry = entryOf(message, m)
+    if (entry !== '') entries.push(truncate(entry, m.noticeOmitted))
   }
 
   if (entries.length > 0) {
@@ -78,6 +105,7 @@ function discardedPart(messages: readonly NoticeMessage[], m: Messages): string 
  * - 2 行目: `/unlock` の案内。
  * - 破棄された入力があれば「破棄された入力:」の後に 1 件 1 行 (件の間は空行 1 つ)、
  *   1 件が `NOTICE_TEXT_LIMIT` 文字を超えたら省略記号を付ける。
+ *   1 件の文面は出どころ (`source`) で決める (`entryOf`)。
  * - `type` が `'text'` 以外のブロックの総数 k が 1 以上なら最後に添付の行を足す。
  * 行は `\n` で結合し、末尾に改行は付けない。
  * `locale` は書き込み時点の表示言語 (spec-ui v0.5 §F)。
@@ -96,6 +124,7 @@ export function buildBlockNotice(
  * 連続通知の比較に使う文面 (spec-ui §D、#30)。純粋関数。
  * 実際に会話へ書く文面のうち、1 行目の経過分を除いた部分 (破棄された入力と添付)。
  * 経過分はブロックのたびに増えるため、比較には使わない。
+ * `buildBlockNotice` と同じ走査 (`discardedPart`) なので、#29 の出どころごとの文面もそのまま比較される。
  */
 export function noticeDedupeKey(messages: readonly NoticeMessage[], locale: Locale): string {
   return discardedPart(messages, MESSAGES[locale])
