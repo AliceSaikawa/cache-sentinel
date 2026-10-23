@@ -332,14 +332,27 @@ test('stateExists はファイルがあれば true、無ければ false (ファ�
   assert.equal(await stateExists(path), true)
 })
 
-test('stateExists はディレクトリや読めないパスでも false (例外を投げない)', async (t) => {
+test('stateExists はディレクトリでも true、親ディレクトリが無ければ false', async (t) => {
   const dir = await tmpDir(t)
 
-  assert.equal(await stateExists(dir), true) // ディレクトリは存在する
-  assert.equal(await stateExists(join(dir, 'nope', 'state.json')), false)
+  assert.equal(await stateExists(dir), true)
+  assert.equal(await stateExists(join(dir, 'nope', 'state.json')), false) // ENOENT
 })
 
+test(
+  'stateExists は ENOENT 以外のエラーでは true (移行で上書きしない側に倒す、例外を投げない)',
+  // Windows ではファイルの下のパスが ENOTDIR にならない(ENOENT になる)見込みのため外す(Windows では未確認)。
+  { skip: process.platform === 'win32' ? 'Windows では ENOTDIR を作れない見込み' : false },
+  async (t) => {
+    const dir = await tmpDir(t)
+    await writeFile(join(dir, 'file'), '', 'utf8')
+
+    assert.equal(await stateExists(join(dir, 'file', 'state.json')), true) // ENOTDIR
+  },
+)
+
 // --- tempPathFor (Issue #6: Windows 形式のパスでも保存できること) ---
+
 test('tempPathFor は win32 の保存先と同じディレクトリに一時ファイルを作る (Issue #6)', () => {
   const target = 'C:\\Users\\u\\.dsh\\cache-sentinel\\state.json'
   const tmp = tempPathFor(target, '1234.5.ab', win32)

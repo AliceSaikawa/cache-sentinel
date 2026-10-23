@@ -33,7 +33,10 @@ test('isIgnoredPath はパッケージ直下のメタデータだけを無視す
 })
 
 test('PACKAGES は @deepseek-ai の対象パッケージを重複なく並べる', () => {
-  assert.equal(PACKAGES.length, 16)
+  assert.equal(PACKAGES.length, 18)
   assert.equal(new Set(PACKAGES).size, PACKAGES.length)
-  for (const pkg of PACKAGES) assert.match(pkg, /^@deepseek-ai\/dsh-/)
+  for (const pkg of PACKAGES) assert.match(pkg, /^@deepseek-ai\/dsh(-|$)/)
+  // プロファイル名の取得(#9)で依存した 2 つ
+  assert.ok(PACKAGES.includes('@deepseek-ai/dsh-app-boot'))
+  assert.ok(PACKAGES.includes('@deepseek-ai/dsh'))
 })

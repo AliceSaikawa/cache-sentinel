@@ -30,14 +30,21 @@
 { "version": 2, "mode": "both", "baselineAt": 1792062384184, "unarchivedAt": { "<sessionId>": 1792064310709 } }
 ```
 - `mode` と `baselineAt` は省略可。version 1(`mode` なし・`baselineAt` 必須)も読める。破損時は空の状態(mode なし・baselineAt なし)。
-- 場所: `$DSH_HOME/cache-sentinel/<プロファイル名>/state.json`(設定 `stateFile` で変更可)。
-  - プロファイル名は `ctx.get('profileContext')?.name`(#9、根拠は spike.md「プロファイル名の取得」)。
+- 場所: `$DSH_HOME/cache-sentinel/profiles/<プロファイル名>/state.json`(設定 `stateFile` で変更可)。
+  - プロファイル名は `ctx.get('profileContext')?.name`(#9、根拠は spike.md「プロファイル名の取得」Z1)。
     プロファイルごとに分けるのは、同じ `$DSH_HOME` を使う複数プロファイルが同時に動いたときに
     モード・`baselineAt`・`unarchivedAt` を後勝ちで上書きし合わないようにするため。
-  - 名前が取れないとき(profileContext を provide しないホスト)は従来の `$DSH_HOME/cache-sentinel/state.json`。
-  - 移行: プロファイル別の既定の場所を使うとき(`stateFile` を設定していないとき)、そのファイルが無く、
-    従来の共有ファイルがあれば**初回だけ**それを読んで引き継ぐ。`stateFile` を設定しているときは、そのファイルだけを読む。
-    従来のファイルは消さない・書き換えない(共有ファイルを使うホストと併存できるようにするため)。
+  - `profiles/` の下に置くのは、従来の `state.json` や一時ファイルと同じ階層にしないため(名前が `state.json` の
+    プロファイルでも保存できる)。名前は変換しない(spike.md Z3)。
+  - 名前が取れないとき(profileContext を provide しないホスト)と、名前が DSH のプロファイル名の規則に合わないとき
+    (空、`/` か `\` を含む、`.`、`..`、`node_modules`。DSH の `resolveProfileDir` と同じ。spike.md Z3)は
+    従来の `$DSH_HOME/cache-sentinel/state.json`。
+  - 移行: プロファイル別の既定の場所を使うとき(`stateFile` を設定していないとき)、起動時にそのファイルが無ければ、
+    従来の共有ファイルを読み(無ければ空の状態)、その内容でプロファイル別のファイルを作る。以後の起動では
+    従来のファイルを読まない。作れなかったときは warn を出して読んだ内容で動き、次の起動でもう一度移行する。
+    ファイルの有無は存在で決め、無いと確かめられたとき(ENOENT)だけ「無い」とする(読めないファイルを上書きしないため)。
+  - 従来のファイルは消さない・書き換えない(共有ファイルを使うホストと併存できるようにするため)。
+  - `stateFile` を設定しているときは、そのファイルだけを読む(移行しない)。
 - アーカイブ状態(DSH の `$DSH_HOME/storages/workspace.json`)は全プロファイルで共有され、
   cache-sentinel からは分離できない。複数プロファイルの同時利用の注意は README の Limitations に書く(§8)。
 
@@ -103,7 +110,7 @@
 | `archiveExisting` | boolean | false | 基準時刻より前に止まったセッションもアーカイブ対象にする |
 | `maxPerCycle` | 整数 ≥1 | 20 | 1 サイクルのアーカイブ上限 |
 | `dryRun` | boolean | false | 拒否もアーカイブもせずログのみ |
-| `stateFile` | string | `$DSH_HOME/cache-sentinel/<プロファイル名>/state.json` | 永続状態 (§C) |
+| `stateFile` | string | `$DSH_HOME/cache-sentinel/profiles/<プロファイル名>/state.json` | 永続状態 (§C) |
 未知キー・型不正は例外(旧方式と同じ方針)。
 
 ## 7. 最終応答時刻の取得
@@ -123,7 +130,7 @@
 - **複数プロファイルの同時利用**: `state.json` はプロファイルごとに分かれる(§C)が、アーカイブ状態
   (`$DSH_HOME/storages/workspace.json`)は全プロファイルで共有される。DSH は起動時に 1 回読んで以後再読込せず、
   書き込みでファイル全体を置き換えるため、同時に動かすとアーカイブ / アンアーカイブ / ピンの変更が互いに
-  失われうる。これは DSH 側の挙動で cache-sentinel では防げない(根拠は spike.md「プロファイル名の取得」Y4)。
+  失われうる。これは DSH 側の挙動で cache-sentinel では防げない(根拠は spike.md「プロファイル名の取得」Z4)。
 
 ## 9. 受入基準
 - B1: 失効したセッションでの送信は拒否され、モデルへのリクエストが発生しない。
