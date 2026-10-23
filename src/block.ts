@@ -53,6 +53,9 @@ export type StepMessage = NoticeMessage & {
   readonly source?: NoticeSource & { readonly kind: string }
 }
 
+/** エージェントの状態(dsh-agent の `AgentStatus`、`runtime-types.d.ts:90`)。 */
+export type AgentStatus = 'idle' | 'running'
+
 /** `agent/pre-step` の payload のうち使う部分。 */
 export interface PreStepPayload {
   agent: AgentLike
@@ -73,8 +76,8 @@ export type CommandResult = { kind: 'success'; text?: string } | { kind: 'error'
 export interface Sentinel {
   onPreStep(payload: PreStepPayload, next: () => Promise<PreStepDecision>): Promise<PreStepDecision>
   onSessionEvent(session: SessionLike, event: TimedEvent): void
-  /** `agent/status` が idle に戻ったとき。保留の通知があれば turn の外に書く(#27)。 */
-  onAgentStatus(status: string, session: SessionLike | undefined): void
+  /** `agent/status` の遷移。idle で保留の通知を turn の外に書き、running で前のターンの保留を捨てる(#27)。 */
+  onAgentStatus(status: AgentStatus, session: SessionLike): void
   /** `/unlock`。ゲートが無効なら inactiveText を返す。 */
   unlock(agent: AgentLike, inactiveText: string): CommandResult
   /** 最終応答からの経過分(切り捨て)。応答がなければ undefined。 */
@@ -215,20 +218,17 @@ export function createSentinel(
     },
 
     /**
-     * `agent/status` が idle に戻ったら、そのセッションの保留の通知を書く(#27)。
-     * これは blocked の `turn/end` の**後**に必ず 1 回来るので、通知は turn の外に出る
-     * (spike.md「通知を turn の外に書く」Q2)。
-     * - idle 以外(running)と、保留が無いセッションでは何もしない。
-     * - session が無い遷移では何もしない(どのセッションの保留かが分からないので、他のセッションの保留に触れない)。
-     * - 書けなかった(append が無い・失敗した)ときも保留は捨てる。遅れて溜め込まない。
+     * `agent/status` の遷移(#27)。
+     * - `idle`: そのセッションの保留の通知を書く。idle は blocked の `turn/end` の**後**に必ず 1 回来るので、
+     *   通知は turn の外に出る(spike.md「通知を turn の外に書く」Q2)。書けなかったら(append の失敗)warn を出して捨てる。
+     * - `running`: 保留が残っていれば捨てる。running は新しいドライバの開始で、そのステップの pre-step より前に来る
+     *   (同 Q6)ので、残っているのは idle が来なかった前のターンの通知。次のターンの下に遅れて出さない。
      */
     onAgentStatus(status, session) {
-      if (status !== 'idle') return
-      if (session === undefined) return
       const notice = pending.take(session.id)
       if (notice === undefined) return
-      if (session.append === undefined) {
-        log.info(`ブロック通知を書けませんでした(append 不可): ${session.id}`)
+      if (status === 'running') {
+        log.info(`前のターンで保留したブロック通知を捨てました(idle が来ないまま次のターンが始まったため): ${session.id}`)
         return
       }
       appendNotice(session, notice)

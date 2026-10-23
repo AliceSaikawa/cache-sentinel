@@ -95,7 +95,7 @@ function makeLogger() {
  * `agent/status` が idle に戻ったことを sentinel に伝える(#27)。
  * 実機では blocked の `turn/end` の後に必ず来るので、通知はこの時点で書かれる。
  */
-function goIdle(sentinel: ReturnType<typeof createSentinel>, session: SessionLike | undefined): void {
+function goIdle(sentinel: ReturnType<typeof createSentinel>, session: SessionLike): void {
   sentinel.onAgentStatus('idle', session)
 }
 
@@ -1001,17 +1001,55 @@ test('#27: reject の時点では書かず、idle に戻ったときに 1 回だ
   assert.equal(appends.length, 2)
 })
 
-test('#27: idle 以外の status では書かない', async () => {
+test('#27: idle が来ないまま running が来たら、前のターンの保留を捨てて info ログを出す', async () => {
   const log = makeLogger()
   const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
   const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
 
-  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('入力')] }, nextSpy().next)
+  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('古い入力')] }, nextSpy().next)
 
+  // 次のドライバの開始。保留は前のターンのものなので書かずに捨てる。
   sentinel.onAgentStatus('running', session)
   assert.equal(appends.length, 0)
+  assert.deepEqual(log.info.slice(-1), [
+    '前のターンで保留したブロック通知を捨てました(idle が来ないまま次のターンが始まったため): s1',
+  ])
 
+  // そのターンが通って idle に戻っても、古い通知は出ない。
   sentinel.onAgentStatus('idle', session)
+  assert.equal(appends.length, 0)
+})
+
+test('#27: running の後に拒否した通知は、続く idle で書く', async () => {
+  const log = makeLogger()
+  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
+
+  // 実機の順: running(ドライバ開始)→ pre-step で拒否 → idle。
+  sentinel.onAgentStatus('running', session)
+  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('入力')] }, nextSpy().next)
+  sentinel.onAgentStatus('idle', session)
+
+  assert.deepEqual(
+    appends.map((a) => a.type),
+    ['command/run', 'command/done'],
+  )
+  assert.ok(!log.info.some((m) => m.includes('捨てました')), log.info.join('\n'))
+})
+
+test('#27: 保留を捨てた後の同じ文面は、抑えずに通知する(書けなかった通知は出したことにしない)', async () => {
+  const log = makeLogger()
+  const clock = { now: NOW }
+  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
+
+  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('同じ入力')] }, nextSpy().next)
+  sentinel.onAgentStatus('running', session)
+
+  clock.now = NOW + MINUTE
+  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('同じ入力')] }, nextSpy().next)
+  sentinel.onAgentStatus('idle', session)
+
   assert.equal(appends.length, 2)
 })
 
@@ -1091,33 +1129,17 @@ test('#27: 保留があるまま idle が来なければ書かれない (書き�
   assert.equal(appends.length, 0)
 })
 
-test('#27: セッションの無い idle では何もせず、保留はそのセッションの idle で書く', async () => {
-  const log = makeLogger()
-  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
-
-  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('入力')] }, nextSpy().next)
-
-  goIdle(sentinel, undefined)
-  assert.equal(appends.length, 0)
-
-  goIdle(sentinel, session)
-  assert.deepEqual(
-    appends.map((a) => a.type),
-    ['command/run', 'command/done'],
-  )
-})
-
-test('#27: Session に append が無ければ保留を捨てて info ログを出し、落ちない', async () => {
+test('#27: Session に append が無ければ保留を作らず、running でも idle でも何もしない', async () => {
   const log = makeLogger()
   const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
   const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
 
   await sentinel.onPreStep({ ...payload(session), messages: [textMessage('入力')] }, nextSpy().next)
 
-  // append が無い Session では保留を作らない (holdNotice が早期 return する)。
   goIdle(sentinel, session)
+  sentinel.onAgentStatus('running', session)
   assert.deepEqual(log.warn, [])
+  assert.deepEqual(log.info, ['ブロックしました: s1 (最終応答から 61 分, turn 1 step 1)。/unlock で次の送信を許可できます'])
 })
 
 test('#27: append が失敗しても落ちず、保留は残らない (idle の後始末)', async () => {

@@ -13,6 +13,7 @@ import { createDeps, resolveHome, type ArchiveServices } from './archive.ts'
 import {
   createSentinel,
   type AgentLike,
+  type AgentStatus,
   type CommandResult,
   type PreStepDecision,
   type PreStepPayload,
@@ -59,7 +60,7 @@ export interface HostContext extends ArchiveServices {
    */
   on(
     name: 'agent/status',
-    listener: (payload: { agent: AgentLike; status: string }) => void,
+    listener: (payload: { agent: AgentLike; status: AgentStatus }) => void,
   ): () => boolean
   commands: {
     register(definition: {
@@ -96,7 +97,7 @@ export interface Runtime {
   mode(): Mode
   onPreStep(payload: PreStepPayload, next: () => Promise<PreStepDecision>): Promise<PreStepDecision>
   onSessionEvent(session: SessionLike, event: TimedEvent): void
-  onAgentStatus(status: string, session: SessionLike | undefined): void
+  onAgentStatus(status: AgentStatus, session: SessionLike): void
   unlock(agent: AgentLike): CommandResult
   sentinel(agent: AgentLike, rawInput: string): Promise<CommandResult>
   /** アーカイブの 1 サイクル。モードがアーカイブしないときは何もしない。前のサイクル実行中なら飛ばす。 */
@@ -253,7 +254,7 @@ export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void
   ctx.on('agent/pre-step', (payload, next) => runtime.onPreStep(payload, next), { prepend: true })
   ctx.on('session/event', (session, event) => runtime.onSessionEvent(session, event))
   // 通知を turn の外に書く(#27)。idle への遷移は blocked の turn/end の後に必ず来る(spike.md)。
-  ctx.on('agent/status', ({ agent, status }) => runtime.onAgentStatus(status, agent?.session))
+  ctx.on('agent/status', ({ agent, status }) => runtime.onAgentStatus(status, agent.session))
   ctx.commands.register({
     name: 'unlock',
     description: MESSAGES[locale].commandUnlockDescription,

@@ -377,15 +377,16 @@ P1・P2 の挙動は 0.2.1-rc.2 でも同じ(`$PK` は 0.2.1-rc.2 の `node_modu
 結論: **ブロック通知を turn の外 (最上位の行) に置ける。** 実装点は `agent/status` の `idle` 遷移で、
 これは blocked の `turn/end` の**後**に必ず 1 回来る。`agent/status` は `session.append` の出版処理の外で
 emit されるので、そのリスナーからの `session.append` は再入ガードに掛からない。
-`$PK` = rc.2 の `node_modules/@deepseek-ai`。0.2.0-rc.2 / 0.2.1-rc.1 は `~/AI/tmp/cs-issues/packs/` に
-`npm pack` で展開済みのものと diff して同一を確認した。
+`$PK` = rc.2 の `node_modules/@deepseek-ai`。旧版(0.2.0-rc.2 / 0.2.1-rc.1)と比べたのは `dsh-agent` と
+`dsh-agent-loop` の 2 パッケージだけ(`~/AI/tmp/cs-issues/packs/` に `npm pack` で展開したもの)。
+`dsh-session`・`dsh-client-ui-conversation`・`dsh-client-ui-chat` の旧版とは比べていない(Q3・Q4 は rc.2 でだけ確認)。
 
 ## Q1: `agent/status` の購読方法 — 確定
-- `$PK/dsh-agent/lib/types/runtime-types.d.ts:245-255` — `'agent/status'(payload: { agent: Agent; status: AgentStatus })`、
-  mode は `emit`(同 `:251`)。`AgentStatus` は `'idle' | 'running'` の 2 値(同 `:90`)。
+- `$PK/dsh-agent/lib/types/runtime-types.d.ts:243-255` — `'agent/status'(payload: { agent: Agent; status: AgentStatus })`
+  (宣言は同 `:252-255`)、mode は `emit`(同 `:250`)。`AgentStatus` は `'idle' | 'running'` の 2 値(同 `:90`)。
 - **payload に `agent` が入っている**(同 `:253`)。したがって session を別途引く必要はなく、
   `payload.agent.session` から直接取れる(`src/index.ts` の `AgentLike` がそのまま使える)。
-- `:249` のコメント: `status` は「その遷移の到達先」。`idle` は「driver が残っていない」。
+- `:248` のコメント: `status` は「その遷移の到達先」。`idle` は「driver が残っていない」。
 - 「transition のときだけ emit される」: `$PK/dsh-agent-loop/lib/index.js:794-799` の `setPhase()` が
   `status !== previousStatus` のときだけ `emit` する(`:798`)。同じ status への再設定では発火しない。
 - 0.2.0-rc.2 / 0.2.1-rc.1 でも payload の型は同一(`deepseek-ai-dsh-agent-<版>/package/lib/types/runtime-types.d.ts:252-255`)。
@@ -400,8 +401,10 @@ blocked の流れで発火するのはこの 1 か所だけ(`agent/turn-stopping
 - すなわち **turn/end の外側**。`turn()` の `finally` は `:1027` で閉じ、`kick()` の `finally` はその後。
 - `agent/turn-stopping` は `:1001` にあり、`turnEnds && this.inbox.nextStep.length === 0` の break 経路でしか
   呼ばれない。reject は `:962` で `return false` するため、blocked では**通らない**。
-- 3 版で `setPhase`(`:794-799`)・`kick()`(`:889-899`)・reject 経路(`:961-962`)・`turn/end`(`:1027-1029`)が
-  すべて同一(0.2.1-rc.1 のみ `phase.abort = new AbortController()` が 1 行多いが `turn()` の外)。
+- 版の比較(`dsh-agent-loop/lib/index.js`): 0.2.1-rc.1 は rc.2 と同一(diff なし)。0.2.0-rc.2 は pre-step の
+  waterfall の組み立て(rc.2 の `:909-920`)が 2 行短く、それより後ろが 2 行ずれる(reject 経路 `:958-960`、
+  `turn/end` の `finally` `:1024-1027`、`agent/turn-stopping` `:999`)。`setPhase`(`:794-799`)・`wakeDriver`(`:854-865`)・
+  `kick()`(`:887-900`)は 3 版で同じ行・同じ内容。どの版でも挙動は同じ。
 
 ## Q3: そのリスナーから `session.append` して再入ガードに掛からないこと — 確定(実測)
 - ガードの実体: `$PK/dsh-session/lib/index.js:1568-1572` の `publicationEntry()` が
@@ -415,12 +418,13 @@ blocked の流れで発火するのはこの 1 か所だけ(`agent/turn-stopping
     しかも投げても握り潰される(`$PK/dsh-session/lib/index.js:1231-1241` の `invokeContainedSessionObservers` が
     try/catch で `logger.warn`)。**§3.1 の「不可能」が実測で裏付いた。**
   - 出版処理の外からの `append` → `OK`。ログは `turn/start, turn/end, command/run, command/done` の順に入った。
-- `agent/status` を同期で emit する経路のうち、inbox 挿入中(`$PK/dsh-agent-loop/lib/index.js:204-206`)に
-  `wakeDriver()`(`:854-865`)が `setPhase({kind:'running'})` を呼ぶ経路だけは append の内側に来る可能性がある。
-  しかし `agent/inbox/inserted` の実リスナーは 2 つだけで、どちらも同期的に `send`/`followup` を呼ばない:
+- `running` への遷移も出版処理の外で emit される。受信箱への挿入は `session.append("agent/inbox/spliced")`
+  (`$PK/dsh-agent-loop/lib/index.js:204`)から戻った後で `agent/inbox/inserted` を emit し(`:205-206`)、
+  `send()` が `wakeDriver()`(`:854-865`)を呼ぶのも splice の後(`:803-804`)。
+  `agent/inbox/inserted` の実リスナーは 2 つだけで、どちらも同期的に `send`/`followup` を呼ばない:
   - `$PK/dsh-goal-round-driver/lib/index.js:249-257` — state のフラグ立てのみ。
   - `$PK/dsh-subagent/lib/index.js:1856-1863` → `wake()`(`:1915-1919`)は Promise を resolve するだけ(append を伴わない)。
-  したがって起こらないが、cache-sentinel 側は**失敗しても warn に留めて落ちない**ようにしてある(`src/block.ts`)。
+  結論(再入しない)は変わらない。それでも cache-sentinel 側は**失敗しても warn に留めて落ちない**ようにしてある(`src/block.ts`)。
 
 ## Q4: UI 側が turn の外の行を最上位に描くこと — コードで追認(実機は Q5)
 - `$PK/dsh-client-ui-conversation/lib/client.js:2178` — payload に `turn` が無いイベントは `currentTurn` に帰属。
@@ -466,6 +470,25 @@ Playwright(1280x900、`locale: ja-JP`)で、失効後の送信から 9 秒後の
   の行がそのまま見えており、折りたたみを開く操作は不要だった(スクリーンショット `shot-rt27-blocked.png`)。
 
 **結論**: 実機で「送信直後に折りたたみの奥に隠れず最上位の行として読める」ことを確認した。
+
+## Q6: `running` は保留を作る pre-step より前に来る — 確定(コード)
+- `$PK/dsh-agent-loop/lib/index.js:854-865` — `wakeDriver()` が idle のときだけ `setPhase({kind:'running', …})`(`:861-867`)
+  を呼んでから `kick()` を始める。`agent/status`(`running`)はここで同期に emit される(`:794-799`)。
+- pre-step(`agent/pre-step` の waterfall、`:909`)は `kick()` → `turn()`(`:938`)の中でしか呼ばれない。
+  したがって、あるドライバで拒否して作った保留より前に、そのドライバの `running` は来終わっている。
+- reject の後は `turn()` が `false` を返してドライバが終わり、`kick()` の `finally` で `idle` になる(Q2)。
+  通常の流れで保留が残ったまま次の `running` が来ることはない。来るのは idle が届かなかった場合
+  (scope の dispatch フィルタが破棄済みの agent を落とすなど。**推測・未確認**)で、その保留は前のターンのものなので捨てる。
+- 0.2.0-rc.2 / 0.2.1-rc.1 も `wakeDriver`・`setPhase`・`kick()` は同じ行(Q2 の版の比較)。
+
+## 未確認・推測
+- (推測)他のプラグインの `agent/status` の idle リスナーが cache-sentinel より先に走り、その中で同期に `followup` して
+  次のドライバを始めると、`running` が入れ子で emit される。このとき cache-sentinel は `running` で保留を捨てるので、
+  通知は次の turn の中には入らないが、出ないまま info ログだけが残る。rc.2 で idle を購読する
+  `dsh-goal-round-driver`(`$PK/dsh-goal-round-driver/lib/index.js:223`)は、ラウンドを始める前に `await` を挟む
+  (`drive()`、同 `:108-133`)ので、この形にはならないと読んだ。他の購読元(`dsh-acp`・`dsh-api-session-controller`・
+  `dsh-compaction-basic`・`dsh-experimental-agent-team`・`dsh-sdk-jsonrpc-server`)は調べていない。
+- 0.2.0-rc.2・0.2.1-rc.1 の実機。`dsh-session`・UI 側の旧版のコード。
 
 ## 確認の再現方法
 1. `node --experimental-strip-types` は不要。WT で `pnpm pack` して tgz を作る。

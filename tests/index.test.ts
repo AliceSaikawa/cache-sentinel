@@ -517,6 +517,10 @@ test('#27: agent/status の購読は payload.agent.session を取り出し、idl
     const status = host.onCalls.find((call) => call.name === 'agent/status')
     assert.ok(preStep)
     assert.ok(status)
+    const drive = status.listener as unknown as (payload: unknown) => void
+
+    // 実機の順: ドライバの開始で running → そのステップの pre-step → idle。
+    drive({ agent: { session }, status: 'running' })
 
     // 送信で始まるターンの最初のステップを拒否させる。
     const decision = await (
@@ -530,11 +534,6 @@ test('#27: agent/status の購読は payload.agent.session を取り出し、idl
     assert.deepEqual(decision, { kind: 'reject' })
 
     // 拒否した時点では書かない。
-    assert.equal(appends.length, 0)
-
-    // DSH は起動時に idle を emit するわけではないので、まず running を挟んでから idle に戻す。
-    const drive = status.listener as unknown as (payload: unknown) => void
-    drive({ agent: { session }, status: 'running' })
     assert.equal(appends.length, 0)
 
     drive({ agent: { session }, status: 'idle' })
