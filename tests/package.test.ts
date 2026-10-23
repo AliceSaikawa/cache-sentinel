@@ -16,6 +16,7 @@ const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
   icon: string
   files: string[]
   exports: Record<string, string | { default: string }>
+  peerDependencies: Record<string, string>
   dsh: { bundle: { patch: string } }
 }
 
@@ -45,4 +46,8 @@ test('main・exports・icon・バンドルの patch が指すファイルは git
 test('icon は DSH が読める形式・大きさ(SVG / PNG / JPEG / WebP、256 KiB 以下)', () => {
   assert.equal(manifest.icon, './icon.svg')
   assert.ok(statSync(resolve(root, manifest.icon)).size <= 256 * 1024)
+})
+
+test('対応する DSH の版を peerDependencies で宣言している', () => {
+  assert.deepEqual(manifest.peerDependencies, { '@deepseek-ai/dsh': '>=0.2.0-rc.2 <=0.2.1-rc.2' })
 })

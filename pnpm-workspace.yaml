@@ -1,2 +1,4 @@
 allowBuilds:
   esbuild: true
+# peerDependencies の @deepseek-ai/dsh は対応範囲の宣言だけで、開発時に DSH 本体を入れない(#31)。
+autoInstallPeers: false
