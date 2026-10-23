@@ -52,6 +52,15 @@ export interface HostContext extends ArchiveServices {
     options: { prepend: boolean },
   ): () => boolean
   on(name: 'session/event', listener: (session: SessionLike, event: TimedEvent) => void): () => boolean
+  /**
+   * エージェントの状態遷移(idle ⇄ running)。
+   * 型は `@deepseek-ai/dsh-agent` の `runtime-types.d.ts` の `'agent/status'`(payload は `{ agent, status }`)。
+   * 通知を turn の外に書くために使う(#27。根拠は spike.md)。
+   */
+  on(
+    name: 'agent/status',
+    listener: (payload: { agent: AgentLike; status: string }) => void,
+  ): () => boolean
   commands: {
     register(definition: {
       name: string
@@ -87,6 +96,7 @@ export interface Runtime {
   mode(): Mode
   onPreStep(payload: PreStepPayload, next: () => Promise<PreStepDecision>): Promise<PreStepDecision>
   onSessionEvent(session: SessionLike, event: TimedEvent): void
+  onAgentStatus(status: string, session: SessionLike | undefined): void
   unlock(agent: AgentLike): CommandResult
   sentinel(agent: AgentLike, rawInput: string): Promise<CommandResult>
   /** アーカイブの 1 サイクル。モードがアーカイブしないときは何もしない。前のサイクル実行中なら飛ばす。 */
@@ -129,6 +139,7 @@ export function createRuntime(
     mode: () => current().mode,
     onPreStep: (payload, next) => block.onPreStep(payload, next),
     onSessionEvent: (session, event) => block.onSessionEvent(session, event),
+    onAgentStatus: (status, session) => block.onAgentStatus(status, session),
     unlock: (agent) => block.unlock(agent, unlockInactiveMessage(current().mode, locale)),
     status: (session) => block.statusOf(session, current().mode),
 
@@ -241,6 +252,8 @@ export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void
   // 自動圧縮も同じ waterfall の中でモデルを呼ぶので、最も外側で判定する(docs/spike.md W2)。
   ctx.on('agent/pre-step', (payload, next) => runtime.onPreStep(payload, next), { prepend: true })
   ctx.on('session/event', (session, event) => runtime.onSessionEvent(session, event))
+  // 通知を turn の外に書く(#27)。idle への遷移は blocked の turn/end の後に必ず来る(spike.md)。
+  ctx.on('agent/status', ({ agent, status }) => runtime.onAgentStatus(status, agent?.session))
   ctx.commands.register({
     name: 'unlock',
     description: MESSAGES[locale].commandUnlockDescription,

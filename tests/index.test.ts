@@ -80,6 +80,16 @@ function expectError(result: CommandResult): string {
   return result.text
 }
 
+/** apply の表示言語を固定する(apply は LC_ALL などの環境から決めるので、CI の言語に依存させない)。 */
+function useLocaleEnv(t: test.TestContext, value: string): void {
+  const before = process.env.LC_ALL
+  process.env.LC_ALL = value
+  t.after(() => {
+    if (before === undefined) delete process.env.LC_ALL
+    else process.env.LC_ALL = before
+  })
+}
+
 interface HarnessOptions {
   now?: number
   sessions?: readonly SessionInfo[]
@@ -346,6 +356,7 @@ test('T26b (9): tick の実行中に再度 tick しても listSessions は 1 回
 interface OnCall {
   name: string
   options: unknown
+  listener: (...args: never[]) => unknown
 }
 
 interface CommandCall {
@@ -396,8 +407,8 @@ function makeHostHarness(options: HostHarnessOptions = {}): HostHarness {
   }
 
   const raw = {
-    on(name: string, _listener: unknown, options?: unknown) {
-      onCalls.push({ name, options })
+    on(name: string, listener: unknown, options?: unknown) {
+      onCalls.push({ name, options, listener: listener as OnCall['listener'] })
       return () => true
     },
     commands: {
@@ -445,6 +456,8 @@ test('T26b (10): apply は pre-step(prepend)・session/event・2 コマンド・
     assert.equal(preStep.length, 1)
     assert.deepEqual(preStep[0]?.options, { prepend: true })
     assert.ok(host.onCalls.some((call) => call.name === 'session/event'))
+    // #27: 通知を turn の外 (idle 遷移) に書くための購読。
+    assert.equal(host.onCalls.filter((call) => call.name === 'agent/status').length, 1)
 
     assert.deepEqual(host.commandCalls.map((call) => call.name).sort(), ['sentinel', 'unlock'])
 
@@ -470,6 +483,70 @@ test('T26b (10): apply は pre-step(prepend)・session/event・2 コマンド・
     assert.equal(body.state, 'unknown')
     assert.equal(body.mode, 'block')
     assert.equal(body.gate, true)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+// ---- (10a2) #27: agent/status の配線 ----
+
+test('#27: agent/status の購読は payload.agent.session を取り出し、idle で通知を turn の外に書く', async (t) => {
+  useLocaleEnv(t, 'ja_JP.UTF-8')
+  t.mock.method(console, 'log', () => {})
+  t.mock.method(console, 'warn', () => {})
+
+  const dir = await mkdtemp(join(tmpdir(), 'cache-sentinel-status-'))
+  const host = makeHostHarness()
+
+  // 失効したセッション (最終応答から 61 分)。append を記録する。
+  // apply は実時計 (Date.now) を使うので、イベント時刻も実時計から作る。
+  const appends: Array<{ type: string; data: unknown }> = []
+  const session = {
+    id: 's1',
+    snapshotEvents: () => [{ type: 'step/end', time: Date.now() - 61 * MINUTE }],
+    append: (type: string, data: unknown) => {
+      appends.push({ type, data })
+    },
+    ownEvents: () => [],
+  }
+
+  try {
+    await apply(host.ctx, { stateFile: join(dir, 'state.json'), checkIntervalSeconds: 30 })
+
+    const preStep = host.onCalls.find((call) => call.name === 'agent/pre-step')
+    const status = host.onCalls.find((call) => call.name === 'agent/status')
+    assert.ok(preStep)
+    assert.ok(status)
+
+    // 送信で始まるターンの最初のステップを拒否させる。
+    const decision = await (
+      preStep.listener as unknown as (
+        payload: unknown,
+        next: () => Promise<unknown>,
+      ) => Promise<unknown>
+    )({ agent: { session }, messages: [{ content: [{ type: 'text', text: '送信' }], source: { kind: 'user' } }], turn: 1, step: 1 }, async () => ({
+      kind: 'enter',
+    }))
+    assert.deepEqual(decision, { kind: 'reject' })
+
+    // 拒否した時点では書かない。
+    assert.equal(appends.length, 0)
+
+    // DSH は起動時に idle を emit するわけではないので、まず running を挟んでから idle に戻す。
+    const drive = status.listener as unknown as (payload: unknown) => void
+    drive({ agent: { session }, status: 'running' })
+    assert.equal(appends.length, 0)
+
+    drive({ agent: { session }, status: 'idle' })
+
+    // turn の外に書かれた (command/run → command/done)。
+    assert.deepEqual(
+      appends.map((entry) => entry.type),
+      ['command/run', 'command/done'],
+    )
+    const done = appends[1]?.data as { kind: string; text: string }
+    assert.equal(done.kind, 'error')
+    assert.match(done.text, /^送信を止めました\(最終応答から 61 分/)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

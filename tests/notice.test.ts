@@ -6,6 +6,7 @@ import {
   NOTICE_TEXT_LIMIT,
   NoticeDedupe,
   noticeDedupeKey,
+  PendingNotices,
   type NoticeMessage,
 } from '../src/notice.ts'
 
@@ -435,4 +436,47 @@ test('buildBlockNotice: 英語と中国語の省略記号', () => {
   const messages: NoticeMessage[] = [{ content: [{ type: 'text', text: body }] }]
   assert.equal(buildBlockNotice({ idleMinutes: 75, messages }, 'en').endsWith('…(truncated)'), true)
   assert.equal(buildBlockNotice({ idleMinutes: 75, messages }, 'zh-CN').endsWith('…(以下省略)'), true)
+})
+
+// --- PendingNotices (#27: turn の外に書くまで取っておく保留) ---
+
+/** 保留する通知。比較キーは文面と別の値にして、両方がそのまま返ることを見る。 */
+function held(text: string) {
+  return { text, key: `鍵:${text}` }
+}
+
+test('PendingNotices: 保留が無ければ take は undefined', () => {
+  const pending = new PendingNotices()
+
+  assert.equal(pending.take('s1'), undefined)
+  assert.equal(pending.size, 0)
+})
+
+test('PendingNotices: hold した文面を take で 1 回だけ取り出せる', () => {
+  const pending = new PendingNotices()
+  pending.hold('s1', held('文面'))
+
+  assert.deepEqual(pending.take('s1'), { text: '文面', key: '鍵:文面' })
+  // 取り出したら消える (二重に書かない)。
+  assert.equal(pending.take('s1'), undefined)
+  assert.equal(pending.size, 0)
+})
+
+test('PendingNotices: 同じセッションの hold は最新の 1 件に置き換わる', () => {
+  const pending = new PendingNotices()
+  pending.hold('s1', held('古い'))
+  pending.hold('s1', held('新しい'))
+
+  assert.equal(pending.size, 1)
+  assert.deepEqual(pending.take('s1'), { text: '新しい', key: '鍵:新しい' })
+})
+
+test('PendingNotices: セッションごとに独立して持つ', () => {
+  const pending = new PendingNotices()
+  pending.hold('a', held('A'))
+  pending.hold('b', held('B'))
+
+  assert.equal(pending.size, 2)
+  assert.deepEqual(pending.take('a'), { text: 'A', key: '鍵:A' })
+  assert.deepEqual(pending.take('b'), { text: 'B', key: '鍵:B' })
 })

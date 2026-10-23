@@ -369,3 +369,110 @@ P1・P2 の挙動は 0.2.1-rc.2 でも同じ(`$PK` は 0.2.1-rc.2 の `node_modu
 - `.d.ts` での裏付け: `MessageSourceMap` は「merge-extensible」で、producer ごとの `kind` は各プラグインが
   自分のモジュールで宣言する(`$PK/dsh-llm/lib/types/message.d.ts:95-100`)。未知の `kind` も
   `MessageSource` として `messages` に入る。
+
+---
+
+# 通知を turn の外に書く (`agent/status` が idle に戻る遷移) (2026-10-23, DSH 0.2.1-rc.2) — #27
+
+結論: **ブロック通知を turn の外 (最上位の行) に置ける。** 実装点は `agent/status` の `idle` 遷移で、
+これは blocked の `turn/end` の**後**に必ず 1 回来る。`agent/status` は `session.append` の出版処理の外で
+emit されるので、そのリスナーからの `session.append` は再入ガードに掛からない。
+`$PK` = rc.2 の `node_modules/@deepseek-ai`。0.2.0-rc.2 / 0.2.1-rc.1 は `~/AI/tmp/cs-issues/packs/` に
+`npm pack` で展開済みのものと diff して同一を確認した。
+
+## Q1: `agent/status` の購読方法 — 確定
+- `$PK/dsh-agent/lib/types/runtime-types.d.ts:245-255` — `'agent/status'(payload: { agent: Agent; status: AgentStatus })`、
+  mode は `emit`(同 `:251`)。`AgentStatus` は `'idle' | 'running'` の 2 値(同 `:90`)。
+- **payload に `agent` が入っている**(同 `:253`)。したがって session を別途引く必要はなく、
+  `payload.agent.session` から直接取れる(`src/index.ts` の `AgentLike` がそのまま使える)。
+- `:249` のコメント: `status` は「その遷移の到達先」。`idle` は「driver が残っていない」。
+- 「transition のときだけ emit される」: `$PK/dsh-agent-loop/lib/index.js:794-799` の `setPhase()` が
+  `status !== previousStatus` のときだけ `emit` する(`:798`)。同じ status への再設定では発火しない。
+- 0.2.0-rc.2 / 0.2.1-rc.1 でも payload の型は同一(`deepseek-ai-dsh-agent-<版>/package/lib/types/runtime-types.d.ts:252-255`)。
+
+## Q2: `idle` への遷移が blocked の `turn/end` の後に来ること — 確定
+blocked の流れで発火するのはこの 1 か所だけ(`agent/turn-stopping` は reject 経路では通らない)。
+1. `$PK/dsh-agent-loop/lib/index.js:961-962` — `preStep` が `{kind:'reject'}` を返すと `turnEnds = {kind:'blocked'}` にして `return false`。
+2. 同 `:1027-1029` — `finally` が `session.append("turn/end", { turn, reason: turnEnds })` を実行。
+3. `:889` — `while (await this.turn())` が `false` で抜ける。
+4. `:891-899` — `kick()` の `finally` が `setPhase({kind:'idle', lastTurn: turn})` を呼ぶ。
+5. `:794-799` — `setPhase` が `agent/status` を emit(`running` → `idle`)。
+- すなわち **turn/end の外側**。`turn()` の `finally` は `:1027` で閉じ、`kick()` の `finally` はその後。
+- `agent/turn-stopping` は `:1001` にあり、`turnEnds && this.inbox.nextStep.length === 0` の break 経路でしか
+  呼ばれない。reject は `:962` で `return false` するため、blocked では**通らない**。
+- 3 版で `setPhase`(`:794-799`)・`kick()`(`:889-899`)・reject 経路(`:961-962`)・`turn/end`(`:1027-1029`)が
+  すべて同一(0.2.1-rc.1 のみ `phase.abort = new AbortController()` が 1 行多いが `turn()` の外)。
+
+## Q3: そのリスナーから `session.append` して再入ガードに掛からないこと — 確定(実測)
+- ガードの実体: `$PK/dsh-session/lib/index.js:1568-1572` の `publicationEntry()` が
+  `attachments.get(this)?.appending` なら throw。`append()` は先頭でこれを呼ぶ(`:1527`)。
+  `commit()` が `:1581` で `appending = true` にし、`:1592` の**内側**で `session/event` リスナーを同期で呼び、
+  `:1595` の `finally` で戻す。
+- **`agent/status` はこの出版処理の外**。`setPhase` はドライバのフェーズ遷移(`kick()` の `finally`)で
+  emit するので、その時点で `appending` は立っていない。
+- 実測(`~/AI/tmp/cs-issues/rt27/reentry.mjs`、cordis `Context` + `SessionStore.enter` + 実物の `Session`):
+  - `session/event` のリスナーから `append` → `THROW: session append cannot reenter while another append is being published`。
+    しかも投げても握り潰される(`$PK/dsh-session/lib/index.js:1231-1241` の `invokeContainedSessionObservers` が
+    try/catch で `logger.warn`)。**§3.1 の「不可能」が実測で裏付いた。**
+  - 出版処理の外からの `append` → `OK`。ログは `turn/start, turn/end, command/run, command/done` の順に入った。
+- `agent/status` を同期で emit する経路のうち、inbox 挿入中(`$PK/dsh-agent-loop/lib/index.js:204-206`)に
+  `wakeDriver()`(`:854-865`)が `setPhase({kind:'running'})` を呼ぶ経路だけは append の内側に来る可能性がある。
+  しかし `agent/inbox/inserted` の実リスナーは 2 つだけで、どちらも同期的に `send`/`followup` を呼ばない:
+  - `$PK/dsh-goal-round-driver/lib/index.js:249-257` — state のフラグ立てのみ。
+  - `$PK/dsh-subagent/lib/index.js:1856-1863` → `wake()`(`:1915-1919`)は Promise を resolve するだけ(append を伴わない)。
+  したがって起こらないが、cache-sentinel 側は**失敗しても warn に留めて落ちない**ようにしてある(`src/block.ts`)。
+
+## Q4: UI 側が turn の外の行を最上位に描くこと — コードで追認(実機は Q5)
+- `$PK/dsh-client-ui-conversation/lib/client.js:2178` — payload に `turn` が無いイベントは `currentTurn` に帰属。
+  同 `:2191-2194` — `turn/end` で `currentTurn = undefined` にリセット。
+- `command/run` / `command/done` は payload に `turn` を持たない(`$PK/dsh-commands/lib/types/types.d.ts:101-118`)。
+  → `turn/end` の**後**に append すれば `kind:'session'` になり、`$PK/dsh-client-ui-chat/lib/client.js:11645-11653` が
+  turn を持たないノードを最上位に置く。**この経路はコードで確認した。実機での結果は Q5 に書く。**
+- `$PK/dsh-client-ui-chat/lib/client.js:4159` の `alwaysOpen` に `blocked` は含まれないため、
+  turn の中で書くと折りたたまれる(現状の不具合)。
+
+## Q5: 実機での確認 (2026-10-23, DSH 0.2.1-rc.2 web プロファイル) — 確定(実測)
+隔離した `HOME` / `DSH_HOME`(`~/AI/tmp/cs-issues/rt27/`)で web プロファイルを port 5292 で起動し、
+`pnpm pack` した本ブランチの cache-sentinel を入れ、`idleMinutes: 1` で失効させて送信した。
+
+### Q5-1: セッションログ上の順序 — 通知は turn の外
+`session.v4.jsonl.zstd` を展開したイベント列(抜粋、`seq` は保存順):
+
+```
+  4 turn/start  turn=1
+  ...
+ 16 step/end    turn=1
+ 17 turn/end    turn=1
+ 20 turn/start  turn=2
+ 22 turn/end    turn=2      ← 拒否。step を持たない turn
+ 23 command/run  turn=(無し)  commandId=cache-sentinel-session-….…-1  name=cache-sentinel
+ 24 command/done turn=(無し)  kind=error  text="送信を止めました(最終応答から 1 分。…)\n破棄された入力:\nhello two please block me"
+```
+
+- 通知の `command/run` / `command/done` は **turn 2 の `turn/end`(seq 22)より後**の seq 23・24 にある。
+- 両イベントは payload に `turn` を**持たない**(`turn=(無し)`)。
+  → Q4 のとおり `currentTurn` に帰属せず `kind:'session'` の最上位ノードになる。
+- 拒否された turn 2 は `turn/start`(seq 20)の直後に `step` を 1 つも持たず `turn/end`(seq 22)しており、
+  `agent/pre-step` の reject が step を作る前に効いていることと整合する。
+
+### Q5-2: DOM 上の見え方 — 折りたたみを開かずに読める
+Playwright(1280x900、`locale: ja-JP`)で、失効後の送信から 9 秒後の状態:
+
+- `送信を止めました` を含む要素: 1 件。`isVisible()` = **true**(クリック・展開操作なし)。
+- 破棄された入力 `hello two please block me`: 1 件。`isVisible()` = **true**。
+- 祖先をたどると `…_text_…` → `…_root_…` → `…_5OnbHa_root` → `EvIC1a_callRow` → `EvIC1a_flowItem`。
+  turn の折りたたみ(展開トグル)の内側ではなく、最上位の flow の項目として置かれている。
+- 画面では、完了した turn の下に `>. cache-sentinel · 送信を止めました(最終応答から 1 分。…)。/unlock …`
+  の行がそのまま見えており、折りたたみを開く操作は不要だった(スクリーンショット `shot-rt27-blocked.png`)。
+
+**結論**: 実機で「送信直後に折りたたみの奥に隠れず最上位の行として読める」ことを確認した。
+
+## 確認の再現方法
+1. `node --experimental-strip-types` は不要。WT で `pnpm pack` して tgz を作る。
+2. 隔離環境: `HOME=~/AI/tmp/cs-issues/rt27/home`、`DSH_HOME=~/AI/tmp/cs-issues/rt27/dsh-home`。
+   web プロファイルの `cordis.patch.yml` に `agent-default-model`(mock プロバイダ)・`llm-pi-ai`(baseURL を
+   ローカルのモックへ)・`cache-sentinel`(`idleMinutes: 1`)を書く。
+3. モック LLM(`mock-llm.mjs`、port 5392)を起動し、`dsh web --port 5292` で起動、Playwright で送信する。
+   1 通目で応答させ、70 秒待って失効させてから 2 通目を送ると拒否される。
+4. 確認は (a) セッションログの `seq` 順と `turn` の有無、(b) `送信を止めました` の `isVisible()` と祖先、
+   の 2 点で行う。使ったスクリプトは `~/AI/tmp/cs-issues/rt27/{verify.mjs,lib.mjs}`。
