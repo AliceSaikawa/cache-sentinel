@@ -87,7 +87,7 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
     - 如果按钮无法执行 `/unlock`，警告下方会显示原因。此时请在输入框中发送 `/unlock`。
   - **M3E（`dsh-webui-m3e`）**：被阻止时的会话内通知行可以显示，但由于 M3E 不会加载其他插件的客户端包，发送前的横幅显示需要 M3E 侧的支持。
 - **与其他插件并用（如 rdsh-ui-comfort）**：
-  - 启用把第 1 次 Enter 变为换行的插件（`rdsh-ui-comfort` 等）后，第 1 次 Enter 不会发送，只会插入换行。这是该插件对按键的处理方式，cache-sentinel 并未阻止输入。第 2 次 Enter 才会发送；若此时已过期，则会在服务端被阻止，并在会话内显示阻止通知。
+  - 启用把第 1 次 Enter 变为换行的插件（`rdsh-ui-comfort` 等）后，第 1 次 Enter 不会发送，只会插入换行。这是该插件对按键的处理方式，cache-sentinel 并未阻止输入。在短时间内（rdsh-ui-comfort 默认 1.5 秒内）再按一次 Enter 才会发送；若此时已过期，则会在服务端被阻止，并在会话内显示阻止通知。间隔较久后再按 Enter，只会再插入一个换行。
 - **状态获取 API**：
   - `GET /api/cache-sentinel.status?sessionId=<id>`（带 Connection 认证）返回会话的状态 JSON。
 
