@@ -338,19 +338,23 @@ P1・P2 の挙動は 0.2.1-rc.2 でも同じ(`$PK` は 0.2.1-rc.2 の `node_modu
 
 ## N1: `source` の形 — `ContextFormed`
 - `UserMessage` の `source` は `MessageSource`(`$PK/dsh-llm/lib/types/message.d.ts:125-133,144-146`)。
-- `MessageSourceMap` の各値は `kind` を持ち、`ContextFormed` を混ぜられる(同 `:101-108`)。
-  `ContextFormed` は `form` で判別する union(同 `:75-93`)。
+- `MessageSourceMap` の各値は `kind` を持つ。基本の map(同 `:101-108`。`user`・`model`・`tool`・`system-prompt`)には
+  `ContextFormed` は無く、混ぜるのは各 producer の module augmentation(例: `$PK/dsh-tool-jobs/lib/types/index.d.ts:12-18`、
+  `$PK/dsh-schedule/lib/types/runtime.d.ts:1-8` の `{ kind } & ContextFormed`)。
+  `ContextFormed` は `form` で判別する union(`$PK/dsh-llm/lib/types/message.d.ts:75-93`)。
   - `form` 省略 / `'instructions'` / `'catalog'` / `'snapshot'`(`sections`)/ `'relay'` / `'recall'` は追加フィールドなし。
   - `form: 'notice'` のときだけ `summary: string` が必須(同 `:85-88`)。コメントは
     「1 行の説明。行を開かずに表示する」(同 `:87`)。
 - `summary` の長さの上限は `CONTEXT_SUMMARY_MAX_CHARS = 120`(`String.length` の 120 文字)。producer は
-  `boundContextSummary()` で切る(同 `:109-120`)。cache-sentinel 側では切り詰めない(2 つ目の切り詰めを足さない)。
+  `boundContextSummary()` で切る(同 `:109-120`)。cache-sentinel 側では 120 文字への切り詰めはしない
+  (1 件 2000 文字の上限は `user` の本文と共通で、summary にもかかる。spec-ui.md §D)。
 - `kind` と `form` は別の軸(同 `:30-45`)。`kind` は「誰が出したか」、`form` は「どんな種類の情報か」。
   同じ `form: 'notice'` でも `kind` は `schedule`・`tool-jobs`・`subagent-settled`・`webhook` など複数ある
   (`$PK/dsh-agent-preset-registry/lib/typert.host.js:637` の `MessageSourceMap` 宣言)。
-- `form: 'notice'` の producer: `subagent-settled`(`$PK/dsh-agent-preset-registry/lib/typert.host.js:817`)、
-  `webhook`(同 `:637`)、`schedule` / `user-approval` / `plan-mode` / `tool-jobs` など
-  (`$PK/dsh-schedule/lib/types/runtime.d.ts:6`、`$PK/dsh-tool-jobs/lib/types/index.d.ts:17`)。
+- 型で必ず `form: 'notice'`(summary あり)と決まっている kind は `subagent-settled`
+  (`$PK/dsh-agent-preset-registry/lib/typert.host.js:817`)と `webhook`(同 `:637`)だけ。
+  `schedule` / `user-approval` / `plan-mode` / `tool-jobs` などは `& ContextFormed` なので notice を「使える」が、
+  form を付けない入力もありうる(`$PK/dsh-schedule/lib/types/runtime.d.ts:6`、`$PK/dsh-tool-jobs/lib/types/index.d.ts:17`)。
 - したがって「リマインダーの `kind` がどれか」を知る必要はない。cache-sentinel は `form` も見ず、
   `source.summary` が文字列かどうかだけで判断できる(#29 の規則)。
 

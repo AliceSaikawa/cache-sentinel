@@ -864,7 +864,7 @@ test('B12: 最初のステップにユーザーの送信と他の入力が混ざ
 
 // --- #29: 破棄された入力の出どころごとの文面 (spec-ui §D) ---
 
-test('B12: answer-guard のリマインダーは summary を載せ、モデル向けの本文を出さない', async () => {
+test('D5: answer-guard のリマインダーは summary を載せ、モデル向けの本文を出さない', async () => {
   const messages = [textMessage('続けて'), noticeMessage(REMINDER_TEXT, REMINDER_SUMMARY)]
   const { result, pass, appends } = await preStepOnExpired({ step: 1, messages })
 
@@ -876,7 +876,7 @@ test('B12: answer-guard のリマインダーは summary を載せ、モデル�
   assert.ok(!done.text.includes('Your previous assistant message'), done.text)
 })
 
-test('B12: summary が無い他の入力は出どころ名だけを 1 行にする', async () => {
+test('D5: summary が無い他の入力は出どころ名だけを 1 行にする', async () => {
   const messages = [textMessage('続けて'), textMessage('自動の入力', 'tool-jobs')]
   const { result, pass, appends } = await preStepOnExpired({ step: 1, messages })
 

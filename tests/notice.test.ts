@@ -319,7 +319,7 @@ test('#29: summary が文字列でなければ無いものとして出どころ�
   }
 })
 
-test('#29: source が無い、または kind が user なら本文を載せる(後方互換)', () => {
+test('#29: source が無い、または kind が user なら本文を載せる', () => {
   const body: NoticeMessage = { content: [{ type: 'text', text: 'こんにちは' }] }
   assert.equal(buildBlockNotice({ idleMinutes: 75, messages: [body] }, 'ja'), `${HEAD}\n破棄された入力:\nこんにちは`)
 
@@ -384,6 +384,20 @@ test('#29: noticeDedupeKey も出どころごとの文面で比較する', () =>
   // 本文が違っても summary が同じなら同じ鍵(モデル向けの本文は比較に影響しない)。
   assert.equal(noticeDedupeKey(a, 'ja'), noticeDedupeKey(sameSummary, 'ja'))
   assert.notEqual(noticeDedupeKey(a, 'ja'), noticeDedupeKey(b, 'ja'))
+})
+
+test('#29: kind が user なら summary があっても本文を載せる', () => {
+  const messages = [noticeMessage('ユーザーの本文', '説明', 'user')]
+  assert.equal(buildBlockNotice({ idleMinutes: 75, messages }, 'ja'), `${HEAD}\n破棄された入力:\nユーザーの本文`)
+})
+
+test('#29: summary が同じでも、同じステップの user の本文が違えば鍵は変わる', () => {
+  const user = (text: string): NoticeMessage => ({ content: [{ type: 'text', text }], source: { kind: 'user' } })
+  const a = [noticeMessage(MODEL_TEXT, 'S'), user('a')]
+  const b = [noticeMessage(MODEL_TEXT, 'S'), user('b')]
+
+  assert.equal(noticeDedupeKey(a, 'ja'), '破棄された入力:\nS\n\na')
+  assert.equal(noticeDedupeKey(b, 'ja'), '破棄された入力:\nS\n\nb')
 })
 
 // --- 表示言語 (spec-ui v0.5 §F) ---

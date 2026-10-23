@@ -17,12 +17,14 @@ export interface NoticeBlock {
 
 /**
  * 入力の出どころの最小形 (issue #29)。
- * `source` は省ける。省いた入力はユーザーの送信と同じ扱いにする(後方互換)。
+ * DSH の型では `source` も `kind` も必須だが、ここでは省けるものとして読む。
+ * 省いた入力は出どころが分からないので、本文を隠さずユーザーの送信と同じく本文を載せる。
+ * 入力禁止の判定 (spec.md §3) では、省いた入力はユーザーの送信に数えない。
  * `summary` は「その入力を 1 行で説明する文」で、モデル向けの本文の代わりに表示するもの
  * (根拠は spike.md「入力の出どころの form / summary の調査」)。
  */
 export interface NoticeSource {
-  /** 出どころの名前。`'user'` はユーザーの送信。無ければユーザーと同じ扱い(後方互換)。 */
+  /** 出どころの名前。`'user'` はユーザーの送信。無ければユーザーの送信と同じく本文を載せる。 */
   readonly kind?: string
   readonly summary?: unknown
 }
@@ -61,7 +63,8 @@ function textOf(message: NoticeMessage): string {
 /**
  * そのメッセージを「破棄された入力」に 1 件として載せる文面を返す (spec-ui §D、#29)。
  * 出どころ (`source`) で決める。
- * - `source` が無い、または `kind: 'user'` → 本文 (`text` ブロックの連結)。
+ * - `kind: 'user'`、または `source` (`kind`) が無い → 本文 (`text` ブロックの連結)。
+ *   `source` が無い入力がここに来るのは、`user` の入力と同じステップで拒否されたときだけ。
  * - それ以外で `summary` が文字列 → その summary(モデル向けの本文は出さない)。
  * - それ以外 → 出どころ名だけの 1 行。
  * どれも空文字なら、その入力は「破棄された入力」に数えない。
