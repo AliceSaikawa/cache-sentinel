@@ -27,7 +27,7 @@ import type { TimedEvent } from '../src/last-response.ts'
 import type { Locale } from '../src/i18n.ts'
 import type { Logger } from '../src/log.ts'
 import { usageMessage } from '../src/mode.ts'
-import type { State } from '../src/state.ts'
+import { loadState, type State } from '../src/state.ts'
 import type { StatusPayload } from '../src/status.ts'
 
 const MINUTE = 60_000
@@ -346,6 +346,8 @@ interface OnCall {
 interface CommandCall {
   name: string
   description: string
+  /** 引数つき実行のための記述子(#36)。引数を取らないコマンドでは undefined。 */
+  input?: { hint: string }
   handler: unknown
 }
 
@@ -396,7 +398,7 @@ function makeHostHarness(options: HostHarnessOptions = {}): HostHarness {
       return () => true
     },
     commands: {
-      register(definition: { name: string; description: string; handler: unknown }) {
+      register(definition: { name: string; description: string; input?: { hint: string }; handler: unknown }) {
         commandCalls.push(definition)
         return () => true
       },
@@ -465,6 +467,57 @@ test('T26b (10): apply は pre-step(prepend)・session/event・2 コマンド・
     assert.equal(body.state, 'unknown')
     assert.equal(body.mode, 'block')
     assert.equal(body.gate, true)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+// ---- (10a) /sentinel の input 記述子 (#36) ----
+
+test('T36a (10): apply は /sentinel に input(hint)を渡し、引数つきの入力がコマンドとして実行される', async (t) => {
+  t.mock.method(console, 'log', () => {})
+  t.mock.method(console, 'warn', () => {})
+
+  const dir = await mkdtemp(join(tmpdir(), 'cache-sentinel-index-'))
+  const host = makeHostHarness()
+
+  try {
+    await apply(host.ctx, { stateFile: join(dir, 'state.json'), checkIntervalSeconds: 30 })
+
+    // 公式 UI は登録に input があるときだけ、引数つきの行をコマンドとして実行する
+    // (docs/spike.md Y2)。hint は候補一覧の表示に使われる必須項目。
+    const sentinel = host.commandCalls.find((call) => call.name === 'sentinel')
+    assert.ok(sentinel)
+    assert.deepEqual(sentinel.input, { hint: '[block|archive|both|off|default]' })
+
+    // /unlock は引数を取らないので input を渡さない(渡すと claim になり、引数の解釈が増えるだけ)。
+    const unlock = host.commandCalls.find((call) => call.name === 'unlock')
+    assert.ok(unlock)
+    assert.equal(unlock.input, undefined)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('T36b (10): /sentinel の handler は rawInput の前後の空白を落としてモードを変える', async (t) => {
+  t.mock.method(console, 'log', () => {})
+  t.mock.method(console, 'warn', () => {})
+
+  const dir = await mkdtemp(join(tmpdir(), 'cache-sentinel-index-'))
+  const host = makeHostHarness()
+
+  try {
+    const stateFile = join(dir, 'state.json')
+    await apply(host.ctx, { stateFile, checkIntervalSeconds: 30 })
+
+    const sentinel = host.commandCalls.find((call) => call.name === 'sentinel')
+    assert.ok(sentinel)
+    // claim 経由の submit は `/${name} ` + args を渡すので、rawInput は区切りの空白を含む(spike.md Y2)。
+    const handler = sentinel.handler as (invocation: { agent: AgentLike; rawInput: string }) => Promise<CommandResult>
+    const result = await handler({ agent: makeAgent('s1'), rawInput: ' archive' })
+
+    assert.equal(result.kind, 'success')
+    assert.equal((await loadState(stateFile)).mode, 'archive')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

@@ -68,6 +68,8 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
 - `/sentinel block` | `archive` | `both` | `off`：切换生效模式。保存在 `$DSH_HOME/cache-sentinel/state.json` 中，DSH 重启后依然保持（优先于 YAML 中的 `mode`）。
 - `/sentinel default`：清除通过 `/sentinel` 保存的模式，恢复为 YAML 中的 `mode` 设置。
 
+参数可选，输入框中会以提示形式显示候选项。
+
 ### `/unlock` 命令
 
 - 在因禁止输入（`block` / `both` 模式）而过期的会话中执行 `/unlock`，会仅允许下 1 次发送。该许可在 `unlockTtlMinutes`（默认 10 分钟）后失效。

@@ -253,3 +253,46 @@ headless などでは起動しない(README「Supported Versions and Environment
   `$PK/dsh-web-app/README.md:80` の「Desktop compositions using this bundle」。実機では未確認(#16)。
 - npm 版 CLI は `desktop` のプラグイン管理を拒否し、Desktop に同梱の `dsh` コマンドで管理する
   (`dsh/README.md:20`)。
+
+---
+
+# 入力欄から引数つきコマンドを実行する条件の調査 (2026-10-23, DSH 0.2.1-rc.2) — #36
+
+`$PK` = 0.2.1-rc.2 の `node_modules/@deepseek-ai`。0.2.0-rc.2 は `npm pack` で
+`~/AI/tmp/cs-issues/pack020/` に展開したもの(以下 `$OLD`)。**0.2.0-rc.2 と 0.2.1-rc.2 で結論は同じ**。
+
+## Y1: `CommandInputDescriptor` の形 — 確定(両版で同一)
+- `{ hint: string; attachments?: boolean }`。`hint` は必須、`attachments` は省略可
+  (`$PK/dsh-commands/lib/types/types.d.ts:20-31`、`$OLD/commands/package/lib/types/types.d.ts:20-31`)。
+  `attachments` を省く(または false)と、添付つきの実行はコマンド実行前に拒否される(同 `:26-30`)。
+  cache-sentinel の `/sentinel` は添付を使わないので **`hint` だけを渡す**。
+- `CommandDescriptor.input?: CommandInputDescriptor`(同 `:63`)と
+  `CommandDefinition.input?: CommandInputDescriptor`
+  (`$PK/dsh-commands/lib/types/index.d.ts:46`、`$OLD/commands/package/lib/types/index.d.ts:40`)。
+  `ctx.commands.register(definition)` はこの `CommandDefinition` を取る(`index.d.ts:94`)。
+
+## Y2: 引数つきの入力がコマンドとして実行される条件 — 確定
+公式 UI は `/` で始まる行を Enter の時点で判定し、コマンドの登録に `input` があるときだけ
+「引数つき 1 行」を claim(引数を受け取る形)として実行する。`input` が無いと **引数つきの行はコマンドにならず、
+普通のメッセージとしてモデルへ送られる**。判定は次の 2 か所。
+
+1. `matchEnter`(`$PK/dsh-client-ui-commands/lib/client.js:1601-1667`、`$OLD/ui-commands/package/lib/client.js:975-1022`)。
+   行を最初の空白で `token`(例 `/sentinel`)と残り(`archive`)に分け、登録を引く。登録が見つかっても
+   `desc.input === undefined` なら `if (!bare) return void 0` で「コマンドでない」を返す
+   (rc.2 `:1665-1666`、0.2.0-rc.2 `:1016-1017`)。`input` があれば
+   `return { claim: this.leadingClaim(desc, session, token.slice(1)) }`(rc.2 `:1661-1664`、
+   0.2.0-rc.2 `:1013-1015`)で claim を返す。claim の `token` は `` `/${shown} ` ``(末尾に空白)、
+   `submit(args, ...)` は `` `/${desc.name} ` + args `` を `remote.commands.execute` に渡す
+   (rc.2 `:1700-1704`、0.2.0-rc.2 `:1046-1055`)。
+2. 受け側 `SubmitMachine.onAdjudicated`(`$PK/dsh-client-ui-conversation/lib/client.js:5193-5210`、
+   `$OLD/ui-conv/package/lib/client.js:3925-3943`)。`matchEnter` の戻りが `undefined` のとき(= コマンドでない)だけ
+   `detachedEffects` に落ちて普通の送信になる(rc.2 `:5205-5209`、0.2.0-rc.2 `:3938-3942`)。
+   claim なら `args = argsAfter(draft, claim.token)`(rc.2 `:5203`、`argsAfter` は `:5064-5073`)を
+   引数として submit する。`argsAfter` は claim の `token`(末尾に空白)で始まる行からその後ろを取る。
+
+- つまり `/sentinel` に `input` を渡すだけで、`/sentinel archive` は claim 経由のコマンド実行になり、
+  handler の `rawInput` に `" archive"`(区切りの空白を含む)が届く。`parseSentinelArgs` は trim するのでそのまま使える。
+- `recordInput` は既定 true(`$PK/dsh-commands/lib/types/index.d.ts:48-53`)。`/sentinel` は従来どおり
+  `command/run` に `rawInput` が記録されてよいので渡さない。
+- `/unlock` は引数を取らない。`input` が無いコマンドは bare な入力で `runDetached` に落ちて実行される
+  (rc.2 `:1667-1673`)ので現状のままで入力欄から使える。`input` を足すと claim になり、引数の解釈が増えるだけ。**変更しない。**

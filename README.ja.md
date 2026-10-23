@@ -68,6 +68,8 @@ DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古い�
 - `/sentinel block` | `archive` | `both` | `off`：実効モードを切り替えます。`$DSH_HOME/cache-sentinel/state.json` に保存され、DSH 再起動後も維持されます（YAML の `mode` より優先）。
 - `/sentinel default`：`/sentinel` で保存したモードを消去し、YAML の `mode` 設定に戻します。
 
+引数は任意で、入力欄では候補がヒントとして表示されます。
+
 ### `/unlock` コマンド
 
 - 入力禁止（`block` / `both` モード）で失効しているセッションで `/unlock` を実行すると、次の送信を 1 回だけ許可します。許可は `unlockTtlMinutes`（既定 10 分）で失効します。

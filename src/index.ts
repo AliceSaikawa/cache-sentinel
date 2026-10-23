@@ -56,6 +56,8 @@ export interface HostContext extends ArchiveServices {
     register(definition: {
       name: string
       description: string
+      /** 引数を取るコマンドに付ける(docs/spike.md Y1)。無いと入力欄からの引数つきの行がコマンドにならない。 */
+      input?: { hint: string }
       handler: (invocation: { agent: AgentLike; rawInput: string }) => CommandResult | Promise<CommandResult>
     }): () => void
   }
@@ -249,6 +251,9 @@ export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void
   ctx.commands.register({
     name: 'sentinel',
     description: MESSAGES[locale].commandSentinelDescription,
+    // 入力欄から `/sentinel archive` のように引数つきで実行できるようにする(#36、根拠は docs/spike.md Y1/Y2)。
+    // 引数は任意で、解釈は runtime.sentinel の parseSentinelArgs が行う。
+    input: { hint: MESSAGES[locale].commandSentinelInputHint },
     handler: ({ agent, rawInput }) => runtime.sentinel(agent, rawInput),
   })
   ctx.interval(() => void runtime.tick(), config.checkIntervalSeconds * 1000)

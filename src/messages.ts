@@ -93,6 +93,8 @@ export interface Messages {
   readonly commandUnlockDescription: string
   /** `/sentinel` の説明。 */
   readonly commandSentinelDescription: string
+  /** `/sentinel` の引数のヒント(入力欄のプレースホルダ)。引数は任意。 */
+  readonly commandSentinelInputHint: string
 }
 
 const en: Messages = {
@@ -147,6 +149,7 @@ const en: Messages = {
     'Allow the next send in a session where sending is blocked because the cache expired (cache-sentinel)',
   commandSentinelDescription:
     'Show cache-sentinel status and switch mode: /sentinel [block|archive|both|off|default]',
+  commandSentinelInputHint: '[block|archive|both|off|default]',
 }
 
 const ja: Messages = {
@@ -201,6 +204,7 @@ const ja: Messages = {
     'キャッシュ切れで入力禁止のセッションで、次の送信を許可する(cache-sentinel)',
   commandSentinelDescription:
     'cache-sentinel の状態表示とモード切り替え: /sentinel [block|archive|both|off|default]',
+  commandSentinelInputHint: '[block|archive|both|off|default]',
 }
 
 const zhCN: Messages = {
@@ -255,6 +259,7 @@ const zhCN: Messages = {
     '在因缓存过期而禁止发送的会话中，允许下一次发送(cache-sentinel)',
   commandSentinelDescription:
     '显示 cache-sentinel 状态并切换模式：/sentinel [block|archive|both|off|default]',
+  commandSentinelInputHint: '[block|archive|both|off|default]',
 }
 
 /** 表示言語ごとの文言カタログ。 */
