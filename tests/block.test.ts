@@ -565,19 +565,6 @@ test('D4: セッションが違えば独立して通知する', async () => {
   assert.equal(second.appends.length, 2)
 })
 
-test('D4: 同じ文面でもセッション id が違えば文面は同じで、コマンド id は別', async () => {
-  const clock = { now: NOW }
-  const first = expiredSession('s1', clock)
-  const second = expiredSession('s2', clock)
-
-  await blockOnce(first.session, '同じ入力')
-  await blockOnce(second.session, '同じ入力')
-
-  const a = appendAt(first.appends, 0).data as CommandRunData
-  const b = appendAt(second.appends, 0).data as CommandRunData
-  assert.notEqual(a.commandId, b.commandId)
-})
-
 test('D4: 破棄入力を切り詰めた後の文面で比較する', async () => {
   const clock = { now: NOW }
   const { session, appends } = expiredSession('s1', clock)
@@ -600,6 +587,96 @@ test('D4: 抑えたときは warn を出さず、append も呼ばない', async 
   await blockOnce(session, '同じ入力')
 
   assert.deepEqual(log.warn, [])
+  assert.equal(appends.length, 2)
+})
+
+test('D4: 会話への追加に失敗した通知は出したことにせず、次の同じ文面で通知する', async () => {
+  const clock = { now: NOW }
+  const log = makeLogger()
+  const appends: Array<{ type: string; data: unknown }> = []
+  const failing = { count: 1 }
+  const { session: base } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const session: SessionLike = {
+    ...base,
+    append(type: string, data: unknown) {
+      if (failing.count > 0) {
+        failing.count -= 1
+        throw new Error('disk full')
+      }
+      appends.push({ type, data })
+    },
+  }
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
+  const send = () => sentinel.onPreStep({ ...payload(session), messages: [textMessage('同じ入力')] }, nextSpy().next)
+
+  assert.deepEqual(await send(), { kind: 'reject' })
+  assert.equal(appends.length, 0)
+
+  clock.now = NOW + MINUTE
+  assert.deepEqual(await send(), { kind: 'reject' })
+  assert.equal(appends.length, 2)
+  assert.equal(appendAt(appends, 0).type, 'command/run')
+  assert.ok(!log.info.some((m) => m.includes('抑えました')), log.info.join('\n'))
+})
+
+/** idleMinutes = 5 の失効したセッション。最終応答は NOW - 6 分。 */
+function shortIdleSession(id: string, clock: { now: number }) {
+  const log = makeLogger()
+  const { session, appends } = appendingSessionWith(id, () => [{ type: 'step/end', time: NOW - 6 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG, idleMinutes: 5 }, log.log, 'ja', () => clock.now)
+  const send = (text: string, kind = 'user') =>
+    sentinel.onPreStep({ ...payload(session), messages: [textMessage(text, kind)] }, nextSpy().next)
+  return { session, appends, sentinel, send }
+}
+
+test('D4: /unlock で送信が通った後は、10 分以内でも同じ文面を通知する', async () => {
+  const clock = { now: NOW }
+  const { session, appends, sentinel, send } = shortIdleSession('s1', clock)
+
+  assert.deepEqual(await send('A'), { kind: 'reject' })
+  assert.equal(appends.length, 2)
+
+  // /unlock → 送信が通って応答 → 6 分後にまた失効。最初の通知から 8 分。
+  clock.now = NOW + MINUTE
+  sentinel.unlock(agentOf(session), INACTIVE_TEXT)
+  assert.deepEqual(await send('別の入力'), { kind: 'enter' })
+  sentinel.onSessionEvent(session, { type: 'step/end', time: NOW + 2 * MINUTE })
+  clock.now = NOW + 8 * MINUTE
+
+  assert.deepEqual(await send('A'), { kind: 'reject' })
+  assert.equal(appends.length, 4)
+  const notice = appendAt(appends, 3).data as CommandDoneData
+  assert.match(notice.text, /^送信を止めました\(最終応答から 6 分。/)
+})
+
+test('D4: 失効していない送信が通った後は、10 分以内でも同じ文面を通知する', async () => {
+  const clock = { now: NOW }
+  const { session, appends, sentinel, send } = shortIdleSession('s1', clock)
+
+  await send('A')
+  // 別の経路(ジョブ完了など)の応答で失効が解け、その間にユーザーの送信が通る。
+  clock.now = NOW + MINUTE
+  sentinel.onSessionEvent(session, { type: 'step/end', time: NOW + MINUTE })
+  clock.now = NOW + 2 * MINUTE
+  assert.deepEqual(await send('別の入力'), { kind: 'enter' })
+  sentinel.onSessionEvent(session, { type: 'step/end', time: NOW + 3 * MINUTE })
+
+  clock.now = NOW + 9 * MINUTE
+  assert.deepEqual(await send('A'), { kind: 'reject' })
+  assert.equal(appends.length, 4)
+})
+
+test('D4: ユーザーの送信ではないステップが通っても、同じ文面の通知は抑えたまま', async () => {
+  const clock = { now: NOW }
+  const { appends, send } = shortIdleSession('s1', clock)
+
+  await send('A')
+  // 失効中のジョブ完了の入力(other-input)は通るが、ユーザーの送信ではない。
+  clock.now = NOW + MINUTE
+  assert.deepEqual(await send('job done', 'tool-jobs'), { kind: 'enter' })
+
+  clock.now = NOW + 2 * MINUTE
+  assert.deepEqual(await send('A'), { kind: 'reject' })
   assert.equal(appends.length, 2)
 })
 

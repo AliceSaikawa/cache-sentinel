@@ -106,7 +106,8 @@ export function noticeDedupeKey(messages: readonly NoticeMessage[], locale: Loca
  *
  * セッションごとに「最後に出した文面」と「その時刻」だけをメモリに持つ (永続化しない)。
  * 直前に出した文面と同じなら `intervalMs` 未満は抑え、違う文面ならすぐ出す。
- * 抑えたときは記録を変えないので、間隔の起点は最後に出した通知のままになる。
+ * 判定 (`shouldSend`) は記録を変えない。呼び出し側が会話への追加に成功してから `record` する。
+ * 抑えたときは記録しないので、間隔の起点は最後に出した通知のままになる。
  */
 export class NoticeDedupe {
   /** セッション id → 最後に出した文面と時刻。 */
@@ -119,19 +120,43 @@ export class NoticeDedupe {
     this.intervalMs = intervalMs
   }
 
+  /** 保持している記録の数。 */
+  get size(): number {
+    return this.lastSent.size
+  }
+
   /**
-   * その文面を今出してよいかを返す。
-   * - 未通知のセッション、または文面が直前と違う → true を返し、文面と時刻を記録する。
-   * - 直前と同じ文面 → 最後に出してから `intervalMs` 未満なら false (記録は変えない)。
+   * その文面を今出してよいかを返す。記録は変えない。
+   * - 未通知のセッション、または文面が直前と違う → true。
+   * - 直前と同じ文面 → 最後に出してから `intervalMs` 未満なら false。
    *   ちょうど `intervalMs` の経過と、時計巻き戻り (負の経過) は true。
    */
   shouldSend(sessionId: string, now: number, text: string): boolean {
     const last = this.lastSent.get(sessionId)
-    if (last !== undefined && last.text === text) {
-      const elapsed = now - last.at
-      if (elapsed >= 0 && elapsed < this.intervalMs) return false
-    }
+    if (last === undefined || last.text !== text) return true
+    const elapsed = now - last.at
+    return !(elapsed >= 0 && elapsed < this.intervalMs)
+  }
+
+  /** 会話に出した文面と時刻を、そのセッションの「最後に出した通知」として記録する。 */
+  record(sessionId: string, now: number, text: string): void {
     this.lastSent.set(sessionId, { text, at: now })
-    return true
+  }
+
+  /** そのセッションの記録を消す。次の通知は文面に関わらず出る。 */
+  forget(sessionId: string): void {
+    this.lastSent.delete(sessionId)
+  }
+
+  /**
+   * 判定に効かなくなった記録を消す。`now - at >= intervalMs` のものを消す。
+   * 時計巻き戻り (負の経過) の記録は、時計が追いつけばまた効くので残す。
+   */
+  prune(now: number): void {
+    for (const [sessionId, last] of this.lastSent) {
+      if (now - last.at >= this.intervalMs) {
+        this.lastSent.delete(sessionId)
+      }
+    }
   }
 }
