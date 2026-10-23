@@ -134,7 +134,7 @@ Linux は Desktop のビルド/配布対象外で、cargo / `rdsh` / Desktop ア
 4. 状態 API: アプリ内のセッションで DevTools から `fetch('api/cache-sentinel.status?sessionId=<id>', { credentials: 'same-origin' })` が 200 を返すか(403 ならオリジンか信頼判定の問題)。
 5. バナー: `idleMinutes` を小さくして失効させ、入力欄の上に警告とボタンが出るか(ボタンの不具合は修正版との同時確認にする)。
 6. ブロック通知: 失効セッションへ送信して会話に通知が出るか、`/unlock` で 1 回通るか。
-7. 共有状態: web と desktop を同時に使ったとき `$DSH_HOME/cache-sentinel/state.json` が競合しないか(#9)。
+7. 共有状態: web と desktop を同時に使ったとき、`state.json` がプロファイルごと(`$DSH_HOME/cache-sentinel/<プロファイル名>/state.json`)に分かれ、開始ログの「状態ファイル: …」が一致すること。移行(従来の `$DSH_HOME/cache-sentinel/state.json` が初回だけ引き継がれること)と、アーカイブ状態(`storages/workspace.json`)が共有されたままなこと(#9、README の Limitations)。
 8. あわせて: desktop プロファイルの実 `package.json`(`bundles` に `@deepseek-ai/dsh-web-app` の有無)、UI を読むオリジン、レンダラの exact route 信頼判定と同梱 DSH の版(0.2.1-alpha.2)の明記。
 
 ### answer-guard の干渉(LLM 応答が必要)

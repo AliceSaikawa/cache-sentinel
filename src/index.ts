@@ -35,7 +35,7 @@ import {
   usageMessage,
 } from './mode.ts'
 import type { Mode } from './modes.ts'
-import { loadState, saveState, type State } from './state.ts'
+import { loadState, saveState, stateExists, type State } from './state.ts'
 import type { StatusPayload } from './status.ts'
 
 export const name = 'cache-sentinel'
@@ -46,6 +46,8 @@ export const STATUS_PATH = '/api/cache-sentinel.status'
 
 /** ctx のうち使う部分。 */
 export interface HostContext extends ArchiveServices {
+  /** サービスを任意に読む口。`profileContext` は profile 起動以外では無いので undefined を返しうる。 */
+  get?(name: string): unknown
   on(
     name: 'agent/pre-step',
     listener: (payload: PreStepPayload, next: () => Promise<PreStepDecision>) => Promise<PreStepDecision>,
@@ -80,6 +82,50 @@ export interface HostContext extends ArchiveServices {
 export interface RuntimeIO {
   now(): number
   save(state: State): Promise<void>
+}
+
+/**
+ * ctx からプロファイル名を読む (§C、#9)。取れなければ undefined
+ * (profileContext は profile 起動以外では provide されない。spike.md「プロファイル名の取得」)。
+ */
+export function profileNameOf(ctx: { get?(name: string): unknown }): string | undefined {
+  const profile = ctx.get?.('profileContext') as { name?: unknown } | undefined
+  const name = profile?.name
+  return typeof name === 'string' && name !== '' ? name : undefined
+}
+
+/**
+ * 永続状態の場所を決める (純粋関数、§C)。
+ * 設定 `stateFile` があればそれを優先し、無ければプロファイルごとの
+ * `join(home, 'cache-sentinel', <プロファイル名>, 'state.json')`。
+ * プロファイル名が取れないときは従来の共有 `join(home, 'cache-sentinel', 'state.json')` を使う(後方互換)。
+ * プロファイル名は DSH が `profiles/<name>` に使うディレクトリ名と同じなので変換しない(#9)。
+ */
+export function statePathFor(
+  home: string,
+  profileName: string | undefined,
+  configured: string | undefined,
+): string {
+  if (configured !== undefined) return configured
+  return profileName === undefined
+    ? join(home, 'cache-sentinel', 'state.json')
+    : join(home, 'cache-sentinel', profileName, 'state.json')
+}
+
+/**
+ * プロファイル別の状態を読む (§C、#9)。
+ * - プロファイル別のファイルがあればそれを読む。
+ * - 無く、従来の共有ファイルがあれば**初回だけ**それを読んで引き継ぐ(共有ファイルは消さない・書き換えない)。
+ * - どちらも無ければ空の状態。
+ * `load` は注入点(既定は state.ts の loadState)で、テストでは偽物に差し替える。
+ */
+export async function loadStateForProfile(
+  profileFile: string,
+  legacyFile: string,
+  load: (filePath: string) => Promise<State> = loadState,
+): Promise<State> {
+  if (await stateExists(profileFile)) return load(profileFile)
+  return load(legacyFile)
 }
 
 /** モード・入力禁止・アーカイブをまとめた実行時の部品。ctx なしでテストできる。 */
@@ -226,12 +272,19 @@ export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void
   const config = parseConfig(rawConfig, locale)
   const log = createLogger(ctx.logger, console)
   const home = resolveHome()
-  const stateFile = config.stateFile ?? join(home, 'cache-sentinel', 'state.json')
+  const profile = profileNameOf(ctx)
+  const stateFile = statePathFor(home, profile, config.stateFile)
+  // 移行 (#9): プロファイル別の既定の場所を使うときだけ、そのファイルが無ければ従来の共有ファイルを引き継ぐ。
+  // 設定で stateFile を明示しているときは、そのファイルだけを読む(従来どおり)。
+  const initialState =
+    config.stateFile === undefined && profile !== undefined
+      ? await loadStateForProfile(stateFile, join(home, 'cache-sentinel', 'state.json'))
+      : await loadState(stateFile)
   const sessionsRoot = join(home, 'sessions')
 
   const runtime = createRuntime(
     config,
-    await loadState(stateFile),
+    initialState,
     createDeps(ctx, () => scanLogMtimes(sessionsRoot), log),
     log,
     { now: Date.now, save: (state) => saveState(stateFile, state) },
@@ -262,5 +315,7 @@ export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void
   log.info(
     `開始 (モード ${runtime.mode()}, 入力禁止 ${config.idleMinutes} 分, both のアーカイブ ${config.archiveAfterMinutes} 分${config.dryRun ? ', dryRun' : ''})`,
   )
+  // どのプロファイルの状態を使っているかを実機で確認できるようにする(プロファイル名が取れないときは共有ファイル)。
+  log.info(`状態ファイル: ${stateFile}${profile === undefined ? ' (プロファイル名なし)' : ''}`)
   void runtime.tick()
 }

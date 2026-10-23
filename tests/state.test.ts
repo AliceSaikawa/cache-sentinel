@@ -11,6 +11,7 @@ import {
   loadState,
   parseState,
   saveState,
+  stateExists,
   tempPathFor,
 } from '../src/state.ts'
 
@@ -318,8 +319,27 @@ test('saveState は書き込み前に親ディレクトリを確実に用意す�
   assert.equal(await exists(path), true)
 })
 
-// --- tempPathFor (Issue #6: Windows 形式のパスでも保存できること) ---
+// --- stateExists (Issue #9: 移行の判断) ---
 
+test('stateExists はファイルがあれば true、無ければ false (ファイルを作らない)', async (t) => {
+  const dir = await tmpDir(t)
+  const path = join(dir, 'state.json')
+
+  assert.equal(await stateExists(path), false)
+  assert.deepEqual(await readdir(dir), [])
+
+  await writeFile(path, '{"version":2,"unarchivedAt":{}}', 'utf8')
+  assert.equal(await stateExists(path), true)
+})
+
+test('stateExists はディレクトリや読めないパスでも false (例外を投げない)', async (t) => {
+  const dir = await tmpDir(t)
+
+  assert.equal(await stateExists(dir), true) // ディレクトリは存在する
+  assert.equal(await stateExists(join(dir, 'nope', 'state.json')), false)
+})
+
+// --- tempPathFor (Issue #6: Windows 形式のパスでも保存できること) ---
 test('tempPathFor は win32 の保存先と同じディレクトリに一時ファイルを作る (Issue #6)', () => {
   const target = 'C:\\Users\\u\\.dsh\\cache-sentinel\\state.json'
   const tmp = tempPathFor(target, '1234.5.ab', win32)

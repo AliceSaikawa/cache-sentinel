@@ -54,7 +54,7 @@
 | `archiveExisting` | boolean | false | 基準時刻より前に更新が止まったセッションも対象にする |
 | `maxPerCycle` | number (≥1) | 20 | 1 サイクルの上限 |
 | `dryRun` | boolean | false | ログのみ |
-| `stateFile` | string | `<harness home>/cache-sentinel/state.json` | 永続状態 |
+| `stateFile` | string | `<harness home>/cache-sentinel/<プロファイル名>/state.json` | 永続状態([spec.md](spec.md) §C) |
 
 ## 7. 永続状態 (state.json)
 ```json

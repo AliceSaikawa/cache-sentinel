@@ -3,7 +3,7 @@
  * 純粋関数 (parseState / tempPathFor) と副作用 (loadState / saveState) を分ける。
  * ファイル操作は node:fs/promises と node:path のみを使う。
  */
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { isMode, type Mode } from './modes.ts'
@@ -114,6 +114,19 @@ export async function loadState(filePath: string): Promise<State> {
     return emptyState()
   }
   return parseState(text)
+}
+
+/**
+ * state.json が存在するか (stat で確かめる)。存在しなければ false、stat が失敗したときも false。
+ * 移行の判断(#9)に使う: 「プロファイル別のファイルがあるか」は内容ではなく存在で決める。
+ */
+export async function stateExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**

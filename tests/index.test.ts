@@ -4,9 +4,9 @@
  * src/ は変更しない。
  */
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 import test from 'node:test'
 
 import { createDeps, isActiveSessionError, type ArchiveServices } from '../src/archive.ts'
@@ -17,6 +17,9 @@ import type { SessionInfo } from '../src/decide.ts'
 import {
   apply,
   createRuntime,
+  loadStateForProfile,
+  profileNameOf,
+  statePathFor,
   statusResponse,
   STATUS_PATH,
   type HostContext,
@@ -27,7 +30,7 @@ import type { TimedEvent } from '../src/last-response.ts'
 import type { Locale } from '../src/i18n.ts'
 import type { Logger } from '../src/log.ts'
 import { usageMessage } from '../src/mode.ts'
-import type { State } from '../src/state.ts'
+import { loadState, saveState, type State } from '../src/state.ts'
 import type { StatusPayload } from '../src/status.ts'
 
 const MINUTE = 60_000
@@ -74,10 +77,39 @@ function expectSuccess(result: CommandResult): string {
   if (result.kind !== 'success') assert.fail(`success を期待しました: ${JSON.stringify(result)}`)
   return result.text ?? ''
 }
-
 function expectError(result: CommandResult): string {
   if (result.kind !== 'error') assert.fail(`error を期待しました: ${JSON.stringify(result)}`)
   return result.text
+}
+
+/** パスが存在するか (テスト用)。 */
+async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** DSH_HOME を差し替え、テスト終了時に元に戻す (resolveHome は process.env を読む)。 */
+function useDshHome(t: test.TestContext, home: string): void {
+  const before = process.env.DSH_HOME
+  process.env.DSH_HOME = home
+  t.after(() => {
+    if (before === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = before
+  })
+}
+
+/** apply の表示言語を固定する(apply は LC_ALL などの環境から決めるので、CI の言語に依存させない)。 */
+function useLocaleEnv(t: test.TestContext, value: string): void {
+  const before = process.env.LC_ALL
+  process.env.LC_ALL = value
+  t.after(() => {
+    if (before === undefined) delete process.env.LC_ALL
+    else process.env.LC_ALL = before
+  })
 }
 
 interface HarnessOptions {
@@ -375,6 +407,8 @@ interface HostHarness {
 interface HostHarnessOptions {
   /** ctx.sessions.get が返すセッション。既定は undefined(読み込まれていない)。 */
   sessionGet?: (id: string) => SessionEntry | undefined
+  /** ctx.get('profileContext') が返すプロファイル名。既定は undefined(provide されていないホスト)。 */
+  profileName?: string
 }
 
 /** 登録だけを記録する偽 ctx。 */
@@ -391,6 +425,11 @@ function makeHostHarness(options: HostHarnessOptions = {}): HostHarness {
   }
 
   const raw = {
+    get(name: string) {
+      return name === 'profileContext' && options.profileName !== undefined
+        ? { name: options.profileName }
+        : undefined
+    },
     on(name: string, _listener: unknown, options?: unknown) {
       onCalls.push({ name, options })
       return () => true
@@ -468,6 +507,176 @@ test('T26b (10): apply は pre-step(prepend)・session/event・2 コマンド・
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+// ---- (10d) プロファイル別の state.json (Issue #9) ----
+
+test('T39 (13): statePathFor は設定 > プロファイル別 > 従来の共有 の順に場所を決める (#9)', () => {
+  const home = '/home/u/.dsh'
+
+  // プロファイル名あり: $DSH_HOME/cache-sentinel/<name>/state.json
+  assert.equal(statePathFor(home, 'web', undefined), join(home, 'cache-sentinel', 'web', 'state.json'))
+  assert.equal(statePathFor(home, 'desktop', undefined), join(home, 'cache-sentinel', 'desktop', 'state.json'))
+
+  // プロファイル名なし: 従来の共有ファイル(後方互換)
+  assert.equal(statePathFor(home, undefined, undefined), join(home, 'cache-sentinel', 'state.json'))
+
+  // 設定 stateFile は常に優先する(プロファイル名の有無によらない)
+  assert.equal(statePathFor(home, 'web', '/tmp/x/state.json'), '/tmp/x/state.json')
+  assert.equal(statePathFor(home, undefined, '/tmp/x/state.json'), '/tmp/x/state.json')
+})
+
+test('T39 (13): statePathFor は Windows 形式のホームでも同じ規則で組み立てる (#6, #9)', () => {
+  // プロファイル名は DSH が profiles/<name> に使うディレクトリ名と同じなので変換しない。
+  // 区切りは実行環境の join に従う(tempPathFor と同じ方針: Windows では win32 の join になる)。
+  const home = 'C:\\Users\\u\\.dsh'
+  assert.equal(
+    statePathFor(home, 'web', undefined),
+    join(home, 'cache-sentinel', 'web', 'state.json'),
+  )
+  assert.equal(statePathFor(home, undefined, undefined), join(home, 'cache-sentinel', 'state.json'))
+
+  // Windows では win32.join と一致し、名前にドライブの `:` が残らない (#6)。
+  assert.equal(
+    win32.join('C:\\Users\\u\\.dsh', 'cache-sentinel', 'web', 'state.json'),
+    'C:\\Users\\u\\.dsh\\cache-sentinel\\web\\state.json',
+  )
+})
+
+test('T39 (13): profileNameOf は profileContext の name だけを文字列として読む (#9)', () => {
+  assert.equal(profileNameOf({ get: () => ({ name: 'web' }) }), 'web')
+  // profileContext が無い / name が文字列でない / 空文字は「プロファイル名なし」
+  assert.equal(profileNameOf({ get: () => undefined }), undefined)
+  assert.equal(profileNameOf({ get: () => ({}) }), undefined)
+  assert.equal(profileNameOf({ get: () => ({ name: '' }) }), undefined)
+  assert.equal(profileNameOf({ get: () => ({ name: 7 }) }), undefined)
+  // get を持たない ctx でも落ちない
+  assert.equal(profileNameOf({}), undefined)
+})
+
+test('T39 (13): loadStateForProfile はプロファイル別を優先し、無ければ従来の共有を読む (#9)', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'cache-sentinel-profile-'))
+  t.after(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  const profileFile = join(dir, 'web', 'state.json')
+  const legacyFile = join(dir, 'state.json')
+  const legacyState: State = { version: 2, mode: 'off', baselineAt: 111, unarchivedAt: { a: 1 } }
+  const ownState: State = { version: 2, mode: 'both', baselineAt: 222, unarchivedAt: { b: 2 } }
+  await mkdir(join(dir, 'web'), { recursive: true })
+  await writeFile(legacyFile, JSON.stringify(legacyState), 'utf8')
+
+  const reads: string[] = []
+  const load = async (filePath: string): Promise<State> => {
+    reads.push(filePath)
+    return loadState(filePath)
+  }
+
+  // プロファイル別が無い + 従来の共有がある → 従来の共有を引き継ぐ(共有ファイルは書き換えない)
+  assert.deepEqual(await loadStateForProfile(profileFile, legacyFile, load), legacyState)
+  assert.equal(await exists(profileFile), false)
+  assert.deepEqual(JSON.parse(await readFile(legacyFile, 'utf8')), legacyState)
+
+  // プロファイル別がある → そちらを読み、従来の共有は読まない
+  await saveState(profileFile, ownState)
+  reads.length = 0
+  assert.deepEqual(await loadStateForProfile(profileFile, legacyFile, load), ownState)
+  assert.deepEqual(reads, [profileFile])
+
+  // どちらも無い → 空の状態
+  assert.deepEqual(await loadStateForProfile(join(dir, 'none', 'state.json'), join(dir, 'none.json'), load), {
+    version: 2,
+    unarchivedAt: {},
+  })
+})
+
+test('T39 (13): apply はプロファイル名に応じて state.json を分け、状態ファイルをログに出す (#9)', async (t) => {
+  useLocaleEnv(t, 'ja_JP.UTF-8')
+  t.mock.method(console, 'log', () => {})
+  t.mock.method(console, 'warn', () => {})
+
+  const dir = await mkdtemp(join(tmpdir(), 'cache-sentinel-index-'))
+  t.after(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  const home = join(dir, 'home')
+  useDshHome(t, home)
+
+  // プロファイル名あり: プロファイル別の場所を使い、従来の共有ファイルを引き継ぐ。
+  const legacy: State = { version: 2, mode: 'off', baselineAt: 111, unarchivedAt: { a: 1 } }
+  await mkdir(join(home, 'cache-sentinel'), { recursive: true })
+  await writeFile(join(home, 'cache-sentinel', 'state.json'), JSON.stringify(legacy), 'utf8')
+
+  const withProfile = makeHostHarness({ profileName: 'web' })
+  await apply(withProfile.ctx, { mode: 'block' })
+
+  const expected = join(home, 'cache-sentinel', 'web', 'state.json')
+  // 移行は読み取りだけ。起動時にプロファイル別ファイルはまだ作らない(最初の persist で作られる)。
+  assert.equal(await exists(expected), false)
+  assert.ok(
+    withProfile.loggerMessages.includes(`info:状態ファイル: ${expected}`),
+    withProfile.loggerMessages.join('\n'),
+  )
+  // 従来の共有ファイルは消さない・書き換えない
+  assert.deepEqual(await loadState(join(home, 'cache-sentinel', 'state.json')), legacy)
+
+  // 引き継いだ状態が実際に効いていることを、登録された sentinel コマンドで確かめる
+  // (従来の共有ファイルは mode: off なので、引き継げていれば実効モードは off)。
+  const sentinel = withProfile.commandCalls.find((call) => call.name === 'sentinel')
+  assert.ok(sentinel, 'sentinel コマンドが登録されている')
+  const handler = sentinel.handler as (invocation: {
+    agent: AgentLike
+    rawInput: string
+  }) => Promise<CommandResult>
+  const shown = await handler({ agent: makeAgent('s1'), rawInput: '' })
+  assert.ok(expectSuccess(shown).split('\n')[0]?.includes('モード off'), expectSuccess(shown))
+
+  // プロファイル名なし: 従来の共有ファイルを使う(後方互換)。
+  const withoutProfile = makeHostHarness()
+  await apply(withoutProfile.ctx, { mode: 'block' })
+
+  assert.deepEqual(await loadState(join(home, 'cache-sentinel', 'state.json')), legacy)
+  assert.ok(
+    withoutProfile.loggerMessages.includes(
+      `info:状態ファイル: ${join(home, 'cache-sentinel', 'state.json')} (プロファイル名なし)`,
+    ),
+    withoutProfile.loggerMessages.join('\n'),
+  )
+})
+
+test('T39 (13): 設定 stateFile はプロファイル別より優先される (#9)', async (t) => {
+  useLocaleEnv(t, 'ja_JP.UTF-8')
+  t.mock.method(console, 'log', () => {})
+  t.mock.method(console, 'warn', () => {})
+
+  const dir = await mkdtemp(join(tmpdir(), 'cache-sentinel-index-'))
+  t.after(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  const home = join(dir, 'home')
+  useDshHome(t, home)
+  // 従来の共有ファイルがあっても、stateFile を明示したときは引き継がない。
+  await mkdir(join(home, 'cache-sentinel'), { recursive: true })
+  const legacy: State = { version: 2, mode: 'off', baselineAt: 111, unarchivedAt: {} }
+  await writeFile(join(home, 'cache-sentinel', 'state.json'), JSON.stringify(legacy), 'utf8')
+  const explicit = join(dir, 'explicit', 'state.json')
+  const host = makeHostHarness({ profileName: 'web' })
+
+  await apply(host.ctx, { stateFile: explicit, mode: 'block' })
+
+  assert.ok(host.loggerMessages.includes(`info:状態ファイル: ${explicit}`), host.loggerMessages.join('\n'))
+  assert.equal(await exists(explicit), false) // 起動時はファイルを作らない
+  const sentinel = host.commandCalls.find((call) => call.name === 'sentinel')
+  assert.ok(sentinel, 'sentinel コマンドが登録されている')
+  const handler = sentinel.handler as (invocation: {
+    agent: AgentLike
+    rawInput: string
+  }) => Promise<CommandResult>
+  const shown = await handler({ agent: makeAgent('s1'), rawInput: '' })
+  assert.ok(expectSuccess(shown).split('\n')[0]?.includes('モード block'), expectSuccess(shown))
 })
 
 // ---- (10b) statusResponse ----

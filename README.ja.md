@@ -65,7 +65,7 @@ DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古い�
 チャットの入力欄から、現在の状態の確認とモードの切り替えができます。
 
 - `/sentinel`：現在の実効モードとその出どころ（`/sentinel` で設定 / YAML の設定）、しきい値、このセッションの最終応答からの経過分、`dryRun` の状態を表示します。
-- `/sentinel block` | `archive` | `both` | `off`：実効モードを切り替えます。`$DSH_HOME/cache-sentinel/state.json` に保存され、DSH 再起動後も維持されます（YAML の `mode` より優先）。
+- `/sentinel block` | `archive` | `both` | `off`：実効モードを切り替えます。`$DSH_HOME/cache-sentinel/<プロファイル名>/state.json`（プロファイルごと）に保存され、DSH 再起動後も維持されます（YAML の `mode` より優先）。
 - `/sentinel default`：`/sentinel` で保存したモードを消去し、YAML の `mode` 設定に戻します。
 
 ### `/unlock` コマンド
@@ -105,7 +105,7 @@ DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古い�
     archiveExisting: false    # 初回有効化より前に止まっていたセッションもアーカイブ対象にする
     maxPerCycle: 20           # 1 サイクルあたりの最大アーカイブ件数
     dryRun: false             # true のときブロックもアーカイブも行わずログのみ出力
-    # stateFile: /path/to/state.json # 永続状態ファイルのパス(既定: $DSH_HOME/cache-sentinel/state.json)
+    # stateFile: /path/to/state.json # 永続状態ファイルのパス(既定: $DSH_HOME/cache-sentinel/<プロファイル名>/state.json)
 ```
 
 - `cordis.patch.yml` の設定変更は DSH の再起動なしで反映されます（プラグインが新しい設定で再適用され、メモリ上の `/unlock` の許可は消えます）。
@@ -130,6 +130,7 @@ DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古い�
 
 ## 制限
 
+- **複数プロファイルの同時利用**：`state.json` はプロファイルごと（`$DSH_HOME/cache-sentinel/<プロファイル名>/state.json`）に分かれるため、モード・`baselineAt`・解除の記録が互いを上書きすることはなくなりました。ただしアーカイブ状態は DSH の共有ファイル `$DSH_HOME/storages/workspace.json` にあり、プラグインからは分離できません。DSH は起動時に 1 回読んで以後再読込せず、書き込みでファイル全体を置き換えるため、2 つのプロファイルを同時に動かすと、一方のアーカイブ / アンアーカイブ / ピンの変更がもう一方の書き込みで失われることがあります。**`archive` / `both` を使う場合は、どれか 1 つのプロファイルでのみ有効にしてください。**
 - M3E では他プラグインのクライアントバンドルを読み込まないため、送信前のバナー表示には M3E 側の対応が必要です（ブロックしたときの会話内の通知は Host 側のみで表示されます）。
 - サブエージェントのセッションでは GUI から `/unlock` を実行できません。
 - タイトル自動生成（`session-title-first-prompt-llm`）は最初の送信時に独立してモデルを呼び出すためゲートの対象外です（新規セッションやフォークの初回のみで、送信されるのは最初のメッセージだけです）。

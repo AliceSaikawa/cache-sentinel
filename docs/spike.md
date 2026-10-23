@@ -253,3 +253,74 @@ headless などでは起動しない(README「Supported Versions and Environment
   `$PK/dsh-web-app/README.md:80` の「Desktop compositions using this bundle」。実機では未確認(#16)。
 - npm 版 CLI は `desktop` のプラグイン管理を拒否し、Desktop に同梱の `dsh` コマンドで管理する
   (`dsh/README.md:20`)。
+
+---
+
+# プロファイル名の取得 (2026-10-23) — #9 の state.json のプロファイル別分離の根拠
+
+`$PK` = `<DSH のインストール先>/node_modules/@deepseek-ai`(0.2.1-rc.2)。旧版は
+`npm pack @deepseek-ai/<pkg>@<版>` で `~/AI/tmp/cs-issues/cs9/` に展開して読んだ。
+実機の起動はしていない(型定義と実装の読解のみ)。コードからの推論である旨は各項に記す。
+
+## Y1: `ctx.get('profileContext')` でプロファイル名が取れる — 確定
+
+- 型: `$PK/dsh-app-boot/lib/types/profile-context.d.ts` の `ProfileContext` は
+  `readonly name: string` を持ち、`declare module '@deepseek-ai/cordis'` で `Context.profileContext` を宣言する
+  (同ファイル `:8-26`、`docs/spike.md` の記述は rc.2 で `:8-30`)。
+  doc は「Present only in a profile launched by dsh.」— つまり**無い環境がありうる**ので、
+  `ctx.get` は `undefined` を返しうる前提で扱う。
+- provide の実装: `$PK/../lib/profile-boot-C14i-8IN.js:290-304`。`const profileContext = { name: options.profile, dir: …, home: resolveDshHome(), … }`
+  を作り、`boot()` のコールバックで `hostCtx.provide("profileContext", profileContext)` を呼ぶ(`:304`)。
+  プラグインの `apply` より前に provide されるため、`apply()` の時点で読める。
+- 消費例(公式プラグイン、いずれも `ctx.get("profileContext")` を optional に扱う):
+  - `$PK/dsh-shell-env/lib/index.js:90-94`(`profile.name` と `profile.dir` をシェル環境に載せる)
+  - `$PK/dsh-app-boot/lib/index.js:2065`(`if (profile === void 0) return …` で undefined を許容)
+- **`inject` に足す必要は無い。** `inject` に無いサービスを `ctx.get` で読むのは公式プラグインと同じ使い方で、
+  inject に足すと `profileContext` を provide しないホスト(テスト・別アプリ)でプラグインが `PENDING` のまま起動しなくなる。
+  そのため `HostContext` に `get?` を足し、`ctx.get?.('profileContext')?.name` と optional に読む。
+- **未確認:** `web` プロファイルの実機で `ctx.get('profileContext')` が解決すること。型・provide の実装・
+  公式プラグインの消費例の 3 点から確実と見ているが、実機確認はしていない(タスク指示により実機確認は行わない)。
+  解決しなかった場合は「プロファイル名なし」の経路に落ちて従来どおり共有ファイルを使うだけで、壊れない。
+
+## Y2: 同じ口が 0.2.0-rc.2・0.2.1-rc.1 にもある — 確定
+
+対応範囲(`docs/spec.md`・README の「0.2.0-rc.2〜0.2.1-rc.1」)の両端で確認した。
+
+| 版 | 型 `profile-context.d.ts` | provide の実装 |
+|---|---|---|
+| 0.2.0-rc.2 | `pack-020/ab020/package/lib/types/profile-context.d.ts`(rc.2 と同一) | `cli-020/package/lib/profile-boot-BZ2ZjNWi.js:259-273`(`name: options.profile`、`:273` で provide) |
+| 0.2.1-rc.1 | `cs9/appboot-0.2.1-rc.1/lib/types/profile-context.d.ts`(rc.2 と diff なし) | `cs9/cli-rc1/package/lib/profile-boot-C14i-8IN.js:290-304`(rc.2 のファイルと diff なし) |
+| 0.2.1-rc.2(手元) | `$PK/dsh-app-boot/lib/types/profile-context.d.ts` | `$PK/../lib/profile-boot-C14i-8IN.js:290-304` |
+
+- 型定義は 0.2.0-rc.2 と 0.2.1-rc.1 で `readBundlePatches` の宣言が増えただけ(`name` は両方にある)。
+- `profile-boot` は 0.2.1-rc.1 と 0.2.1-rc.2 で完全一致、0.2.0-rc.2 とは `initializeProfileFromDefault` の
+  実装だけが違い、`profileContext` の組み立てと provide は同じ。
+- `dsh-shell-env` の消費側も 0.2.1-rc.1 に同じ行がある(`cs9/shell-env-0.2.1-rc.1/lib/index.js:90`)。
+- **未確認:** 0.2.1-alpha.1〜alpha.5 の `dsh-app-boot`。README の対応範囲には含まれるが、
+  `profileContext` は 0.2.0-rc.2 から存在するので alpha 系でも同じと見ている(差分は未取得)。
+
+## Y3: プロファイル名はそのままディレクトリ名に使える — 確認済み(既存の事実)
+
+- `dsh-app-boot` の `resolveProfileDir` は `join(home, 'profiles', name)` を返すだけ
+  (`$PK/dsh-app-boot/lib/index.js:546-549`、`PROFILES_DIR = "profiles"` 同 `:507`)。
+  **プロファイル名は DSH 自身がディレクトリ名として使っている**ので、`/`・`..` などを含む名前は
+  そもそもプロファイルとして成立しない(`dsh --profile` で `profiles/<name>` が作られない)。
+- したがって cache-sentinel はプロファイル名を変換せずそのままパスに使う。
+  変換すると `a/b` と `a_b` のような別プロファイルが同じファイルを共有し、#9 と同じ競合を新たに作るため。
+  パスの組み立てには `node:path` の `join` を使うので、`\` を含む名前でも Windows では区切りとして扱われる
+  (プロファイルディレクトリと挙動が一致する)。
+- **未確認:** DSH がプロファイル名を検証する箇所(正規表現など)そのものは読んでいない。
+  `resolveProfileDir` と実機の `~/.dsh/profiles/`(`web`・`headless`・`cs-pr23-verify`・`pr110-fix`)から、
+  ディレクトリ名と同一であることは確認済み。
+
+## Y4: 複数プロファイルの同時利用 — DSH 側の共有状態
+
+- `$DSH_HOME` はプロファイルに依存しない(`$PK/dsh-home-paths/lib/index.js:109-111` の `resolveDshHome`。
+  引数にプロファイル名は入らない)。`dsh-base/cordis.patch.yml:141,185` の `dshHomePath('sessions')` /
+  `dshHomePath('storages')` も同じホームを指す。
+- **アーカイブ状態(`$DSH_HOME/storages/workspace.json`)は全プロファイルで共有され、cache-sentinel から分離できない。**
+  `WorkspaceRegistry` は起動時に `domain.global.get()` をメモリに持ち(`$PK/dsh-workspace/lib/index.js:383-384`)、
+  書き込みは「メモリ上の global 全体 + 自分の変更」でファイル全体を置き換える(`:938-941`)。
+  `storage-json` の single レイアウトはファイル全体を atomic に置き換える
+  (`$PK/dsh-storage-json/lib/types/atomic.d.ts:1-11`)。プロセス間の直列化は無いので**ロスト更新**になる。
+- この部分は cache-sentinel では防げない。README の Limitations に書いて利用者に委ねるのが #9 で選んだ方針。
