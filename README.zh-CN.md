@@ -65,7 +65,7 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
 可在聊天输入框中查看当前状态并切换模式。
 
 - `/sentinel`：显示当前生效模式及其来源（通过 `/sentinel` 设置 / YAML 设置）、阈值、当前会话距最后一次响应的经过分钟数，以及 `dryRun` 状态。
-- `/sentinel block` | `archive` | `both` | `off`：切换生效模式。保存在 `$DSH_HOME/cache-sentinel/state.json` 中，DSH 重启后依然保持（优先于 YAML 中的 `mode`）。
+- `/sentinel block` | `archive` | `both` | `off`：切换生效模式。保存在 `$DSH_HOME/cache-sentinel/profiles/<配置文件>/state.json` 中（按配置文件分开），DSH 重启后依然保持（优先于 YAML 中的 `mode`）。
 - `/sentinel default`：清除通过 `/sentinel` 保存的模式，恢复为 YAML 中的 `mode` 设置。
 - 注意：在官方 Web UI 中，带参数的 `/sentinel`（`block`、`archive`、`both`、`off`、`default`）目前无法从输入框执行，会作为普通消息发送（[#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)）。不带参数的 `/sentinel` 和 `/unlock` 可以使用。在修复之前，请通过 YAML 中的 `mode` 切换模式。
 
@@ -107,7 +107,7 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
     archiveExisting: false    # 将首次启用前就已停止更新的会话也纳入归档对象
     maxPerCycle: 20           # 每个周期的最大归档数量
     dryRun: false             # 为 true 时既不阻止也不归档，仅输出日志
-    # stateFile: /path/to/state.json # 持久化状态文件路径(默认: $DSH_HOME/cache-sentinel/state.json)
+    # stateFile: /path/to/state.json # 持久化状态文件路径(默认: $DSH_HOME/cache-sentinel/profiles/<配置文件>/state.json)
 ```
 
 - `cordis.patch.yml` 的设置修改无需重启 DSH 即可生效（插件会以新设置重新应用，内存中的 `/unlock` 许可会被清除）。
@@ -136,6 +136,7 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
 
 ## 限制
 
+- **同时运行多个配置文件**：`state.json` 按配置文件分开保存（`$DSH_HOME/cache-sentinel/profiles/<配置文件>/state.json`），因此模式、`baselineAt` 和解除归档记录不会互相覆盖。从旧版本升级时，各配置文件在首次启动时会沿用原来的 `$DSH_HOME/cache-sentinel/state.json` 的内容（原文件不会被删除，之后也不再读取）。无法获取配置文件名的环境仍使用原来的文件。但归档状态保存在 DSH 的共享文件 `$DSH_HOME/storages/workspace.json` 中，插件无法将其分离：DSH 在启动时只读取一次，之后不再重新读取，每次写入都会替换整个文件。因此同时运行两个配置文件时，一方的归档 / 取消归档 / 置顶修改可能被另一方的写入覆盖而丢失。**如果使用 `archive` / `both`，请只在其中一个配置文件中启用。**
 - 由于 M3E 不会加载其他插件的客户端包，发送前的横幅显示需要 M3E 侧的支持（被阻止时的会话内通知仅靠 Host 侧即可显示）。
 - 在子代理会话中，无法从 GUI 执行 `/unlock`。来自父代理的消息不会被阻止，但从 GUI 直接发送给子代理的消息，在子代理一侧缓存已过期时会被阻止。
 - 即使由用户操作产生，非普通发送的输入也不会被阻止：

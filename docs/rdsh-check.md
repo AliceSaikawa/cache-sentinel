@@ -139,7 +139,11 @@ Linux は Desktop のビルド/配布対象外で、cargo / `rdsh` / Desktop ア
 4. 状態 API: アプリ内のセッションで DevTools から `fetch('api/cache-sentinel.status?sessionId=<id>', { credentials: 'same-origin' })` が 200 を返すか(403 ならオリジンか信頼判定の問題)。
 5. バナー: `idleMinutes` を小さくして失効させ、入力欄の上に警告とボタンが出るか(ボタンの不具合は修正版との同時確認にする)。
 6. ブロック通知: 失効セッションへ送信して会話に通知が出るか、`/unlock` で 1 回通るか。
-7. 共有状態: web と desktop を同時に使ったとき `$DSH_HOME/cache-sentinel/state.json` が競合しないか(#9)。
+7. 共有状態(#9 の残課題。PR #44 は `Refs #9` で、Issue #9 の完了条件「再現の有無と条件が記録されている」はこの確認で満たす):
+   - 再現: 修正前の版で web と desktop を同時に動かし、一方の `/sentinel` のモード変更が、もう一方の書き込み(`/sentinel` のモード変更など)で `$DSH_HOME/cache-sentinel/state.json` から消えるかと、その条件を記録する。
+   - 修正後: `state.json` がプロファイルごと(`$DSH_HOME/cache-sentinel/profiles/<プロファイル名>/state.json`)に分かれ、開始ログの「状態ファイル: …」がそのパスと一致すること(「(プロファイル名なし)」が付くなら `profileContext` が取れていない)。
+   - 移行: 各プロファイルの最初の起動で、従来の `$DSH_HOME/cache-sentinel/state.json` の内容でプロファイル別のファイルが作られ(ログ「状態ファイルを作りました: …」)、2 回目以降は作られないこと。従来のファイルが変わらないこと。
+   - アーカイブ状態(`storages/workspace.json`)は共有されたままなこと(README の Limitations)。
 8. あわせて: desktop プロファイルの実 `package.json`(`bundles` に `@deepseek-ai/dsh-web-app` の有無)、UI を読むオリジン、レンダラの exact route 信頼判定と同梱 DSH の版(0.2.1-alpha.2)の明記。
 
 ### answer-guard の干渉(LLM 応答が必要)
