@@ -3,13 +3,21 @@
  * 最後のモデル応答から idleMinutes を超えたセッションでは、ユーザーの送信で始まるターンの最初のステップを拒否する。
  * ターン途中のステップと、ユーザーの送信を含まない入力(ジョブ完了・サブエージェント・ゴール・リマインダーなど)は通す。
  * `/unlock` で次の送信を 1 回だけ許可する。ゲートが働くかは `isActive()`(実効モード)で毎回決める。
+ * 会話への通知は、同じ文面が連続するときだけ 10 分に 1 件に抑える(spec-ui §D、#30)。拒否そのものは毎回行う。
+ * 間にユーザーの送信が通れば、連続とはみなさない。
  */
 import type { Config } from './config.ts'
-import { classifyStep, decideGate } from './gate.ts'
+import { classifyStep, decideGate, type StepKind } from './gate.ts'
 import type { Locale } from './i18n.ts'
 import { LastResponseTracker, type SessionView, type TimedEvent } from './last-response.ts'
 import type { Logger } from './log.ts'
-import { buildBlockNotice, type NoticeMessage } from './notice.ts'
+import {
+  buildBlockNotice,
+  NoticeDedupe,
+  NOTICE_DEDUPE_INTERVAL_MS,
+  noticeDedupeKey,
+  type NoticeMessage,
+} from './notice.ts'
 import { computeStatus, type StatusPayload } from './status.ts'
 import { decideUnlock, UnlockStore, unlockMessage } from './unlock.ts'
 
@@ -116,16 +124,33 @@ export function createSentinel(
     return { events: session.snapshotEvents(), view: sessionViewOf(session) }
   })
   const unlocks = new UnlockStore()
+  const dedupe = new NoticeDedupe(NOTICE_DEDUPE_INTERVAL_MS)
   const ttlMs = config.unlockTtlMinutes * 60_000
   let noticeCounter = 0
 
-  /** 会話にブロック通知を出す(両 UI がコマンド結果として描画する)。失敗しても拒否は続ける。 */
+  /**
+   * 会話にブロック通知を出す(両 UI がコマンド結果として描画する)。失敗しても拒否は続ける。
+   * 直前に出した通知と破棄された入力が同じなら、NOTICE_DEDUPE_INTERVAL_MS 未満は出さず info ログだけ残す
+   * (spec-ui §D、#30)。
+   */
   const notify = (session: SessionLike, idleMinutes: number, messages: readonly NoticeMessage[]): void => {
     if (session.append === undefined) return
-    const commandId = `cache-sentinel-${session.id}-${now()}-${++noticeCounter}`
+    const at = now()
+    const key = noticeDedupeKey(messages, locale)
+    if (!dedupe.shouldSend(session.id, at, key)) {
+      log.info(`同じ文面のブロック通知を抑えました: ${session.id} (最終応答から ${idleMinutes} 分)`)
+      return
+    }
+    const commandId = `cache-sentinel-${session.id}-${at}-${++noticeCounter}`
     try {
       session.append('command/run', { commandId, name: 'cache-sentinel', args: '', source: { kind: 'user' } })
-      session.append('command/done', { commandId, kind: 'error', text: buildBlockNotice({ idleMinutes, messages }, locale) })
+      session.append('command/done', {
+        commandId,
+        kind: 'error',
+        text: buildBlockNotice({ idleMinutes, messages }, locale),
+      })
+      // 会話に出せたときだけ「出した」と記録する。失敗した文面は次の拒否でまた通知する。
+      dedupe.record(session.id, at, key)
     } catch (error) {
       log.warn(`ブロック通知を会話に追加できませんでした: ${session.id}: ${String(error)}`)
     }
@@ -146,17 +171,20 @@ export function createSentinel(
       const session = payload.agent.session
       let decision: ReturnType<typeof decideGate>
       let sourceKinds: string[]
+      let stepKind: StepKind
       try {
         const at = now()
         unlocks.prune(at, ttlMs)
+        dedupe.prune(at)
         sourceKinds = payload.messages.map((message) => message.source?.kind ?? '(source なし)')
+        stepKind = classifyStep(payload.step, sourceKinds)
         decision = decideGate({
           now: at,
           lastResponseAt: lastResponseOf(session),
           idleMinutes: config.idleMinutes,
           grantedAt: unlocks.grantedAt(session.id),
           unlockTtlMinutes: config.unlockTtlMinutes,
-          stepKind: classifyStep(payload.step, sourceKinds),
+          stepKind,
         })
       } catch (error) {
         // 判定できないときは作業を止めない(spec §7)。
@@ -166,6 +194,10 @@ export function createSentinel(
 
       const position = `turn ${payload.turn} step ${payload.step}`
       if (decision.kind === 'pass') {
+        // ユーザーの送信が通ったら、前の通知との「連続」は切れる(spec-ui §D)。
+        if (stepKind === 'user-send' && (decision.reason === 'fresh' || decision.reason === 'unlocked')) {
+          dedupe.forget(session.id)
+        }
         switch (decision.reason) {
           case 'unlocked':
             log.info(`/unlock の許可で通しました: ${session.id}`)
