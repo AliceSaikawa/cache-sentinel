@@ -1,6 +1,6 @@
 {
   "name": "cache-sentinel",
-  "version": "0.5.0",
+  "version": "0.6.0-rc.1",
   "description": "DSH host plugin that guards against uncached prompts: blocks sends (read-only) and/or archives sessions after the prompt cache likely expired.",
   "keywords": [
     "dsh",
