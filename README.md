@@ -69,6 +69,8 @@ You can check the current status and switch modes from the chat input box.
 - `/sentinel default`: Clears the mode saved via `/sentinel` and reverts to the `mode` setting in YAML.
 - Note: in the official Web UI, `/sentinel` with an argument (`block`, `archive`, `both`, `off`, `default`) currently cannot be run from the input box. It is sent as a normal message instead ([#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)). `/sentinel` without an argument and `/unlock` work. Until this is fixed, switch modes with `mode` in YAML.
 
+The argument is optional. After you type `/sentinel ` in the input box, the choices are shown as placeholder text until you type an argument.
+
 ### `/unlock` Command
 
 - Running `/unlock` in an expired session under input blocking (`block` / `both` mode) allows just the next send once. The permission expires after `unlockTtlMinutes` (default: 10 minutes).

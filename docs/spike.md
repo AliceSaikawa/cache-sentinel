@@ -659,3 +659,60 @@ spec.md §2 の lastResponseAt は、サブエージェントの fork の子に�
   `storage-json` の single レイアウトはファイル全体を atomic に置き換える
   (`$PK/dsh-storage-json/lib/types/atomic.d.ts:1-11`)。プロセス間の直列化は無いので**ロスト更新**になる。
 - この部分は cache-sentinel では防げない。README の Limitations に書いて利用者に委ねるのが #9 で選んだ方針。
+
+---
+
+# 入力欄から引数つきコマンドを実行する条件の調査 (2026-10-23, DSH 0.2.1-rc.2) — #36
+
+`$PK` = 0.2.1-rc.2 の `node_modules/@deepseek-ai`。0.2.0-rc.2 は `npm pack` で
+`~/AI/tmp/cs-issues/pack020/` に展開したもの(以下 `$OLD`)。**0.2.0-rc.2 と 0.2.1-rc.2 で結論は同じ**。
+
+## Y1: `CommandInputDescriptor` の形 — 確定(両版で同一)
+- `{ hint: string; attachments?: boolean }`。`hint` は必須、`attachments` は省略可
+  (`$PK/dsh-commands/lib/types/types.d.ts:20-31`、`$OLD/commands/package/lib/types/types.d.ts:20-31`)。
+  `attachments` を省く(または false)と、添付つきの実行はコマンド実行前に拒否される(同 `:26-30`)。
+  cache-sentinel の `/sentinel` は添付を使わないので **`hint` だけを渡す**。
+- `CommandDescriptor.input?: CommandInputDescriptor`(同 `:63`)と
+  `CommandDefinition.input?: CommandInputDescriptor`
+  (`$PK/dsh-commands/lib/types/index.d.ts:46`、`$OLD/commands/package/lib/types/index.d.ts:40`)。
+  `ctx.commands.register(definition)` はこの `CommandDefinition` を取る(`index.d.ts:94`)。
+
+## Y2: 引数つきの入力がコマンドとして実行される条件 — 確定
+公式 UI は `/` で始まる行を Enter の時点で判定し、コマンドの登録に `input` があるときだけ
+「引数つき 1 行」を claim(引数を受け取る形)として実行する。`input` が無いと **引数つきの行はコマンドにならず、
+普通のメッセージとしてモデルへ送られる**。判定は次の 2 か所。
+
+1. `matchEnter`(`$PK/dsh-client-ui-commands/lib/client.js:1624-1673`、`$OLD/ui-commands/package/lib/client.js:975-1024`)。
+   行を最初の空白で `token`(例 `/sentinel`)と残り(`archive`)に分け、登録を引く。登録が見つかっても
+   `desc.input === undefined` なら `if (!bare) return void 0` で「コマンドでない」を返す
+   (rc.2 `:1665`、0.2.0-rc.2 `:1016`)。`input` があれば
+   `return { claim: this.leadingClaim(desc, session, token.slice(1)) }`(rc.2 `:1661-1663`、
+   0.2.0-rc.2 `:1012-1014`)で claim を返す。claim の `token` は `` `/${shown} ` ``(末尾に空白)、
+   `submit(args, ...)` は `` `/${desc.name} ` + args `` を `remote.commands.execute` に渡す
+   (`leadingClaim` は rc.2 `:1695-1705`、0.2.0-rc.2 `:1046-1056`)。
+   Space キーと claim の復元で使う `claimOf`(rc.2 `:1601-1607`)も、`input` が無ければ claim を返さない。
+2. 受け側 `SubmitMachine.onAdjudicated`(`$PK/dsh-client-ui-conversation/lib/client.js:5193-5211`、
+   `$OLD/ui-conv/package/lib/client.js:3925-3943`)。`matchEnter` の戻りが `undefined` のとき(= コマンドでない)だけ
+   `detachedEffects` に落ちて普通の送信になる(rc.2 `:5206-5210`、0.2.0-rc.2 `:3938-3942`)。
+   claim なら `args = argsAfter(draft, claim.token)`(rc.2 `:5203`、`argsAfter` は `:5064-5073`)を
+   引数として submit する。`argsAfter` は claim の `token`(末尾に空白)で始まる行からその後ろを取る。
+
+- つまり `/sentinel` に `input` を渡すだけで、`/sentinel archive` は claim 経由のコマンド実行になり、
+  handler の `rawInput` に `" archive"`(区切りの空白を含む)が届く。`parseSentinelArgs` は trim するのでそのまま使える。
+- `recordInput` は既定 true(`$PK/dsh-commands/lib/types/index.d.ts:48-53`)。`/sentinel` は従来どおり
+  `command/run` に `rawInput` が記録されてよいので渡さない。
+
+`input` を付けると、入力欄での見え方も次のように変わる(コードで確認。実機では未確認)。
+- `hint` は補完の候補ではなく、入力欄のプレースホルダになる。claim 中で `/sentinel ` の後ろが空のあいだだけ
+  `hint` を表示する(`$PK/dsh-client-ui-conversation/lib/client.js:18963-18971`、0.2.0-rc.2 は
+  `$OLD/ui-conv/package/lib/client.js:17418`)。型の doc も "Placeholder shown before the user supplies
+  free-form input"(`types.d.ts:21`)。`hint.<コマンド名>` の翻訳が無いので、登録した文字列がそのまま出る(`:18968-18970`)。
+- メニューから選ぶと、その場では実行されず claim(引数の入力待ち)になる(`dispatch`、rc.2 `:1578`)。
+  `input` が無いコマンドはその場で実行される(rc.2 `:1579-1584`)。
+- 行の途中で打った `/` のメニューから外れる。候補一覧は `hint` のある行を、`position` が `"leading"` のときだけ残す
+  (`candidates`、rc.2 `:1541`・`:1554`、0.2.0-rc.2 `:906`・`:919`)。`position` は `/` が行の最初の空白以外の文字なら
+  `"leading"`、そうでなければ `"inline"`(`$PK/dsh-client-ui-input-trigger/lib/client.js:803`)。
+  `/sentinel` を文中に挿す使い方は想定しないので、影響は小さい。
+- `/unlock` は引数を取らない。`input` が無いコマンドは bare な入力で `runDetached` に落ちて実行される
+  (rc.2 `:1666-1671`)ので現状のままで入力欄から使える。`input` を足すと、メニューで選んだ後にもう一度 Enter が要り、
+  行の途中の `/` メニューにも出なくなるだけで得るものが無い。**変更しない。**

@@ -69,6 +69,8 @@ DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古い�
 - `/sentinel default`：`/sentinel` で保存したモードを消去し、YAML の `mode` 設定に戻します。
 - 注意：公式 Web UI では、引数つきの `/sentinel`（`block`・`archive`・`both`・`off`・`default`）は現在入力欄から実行できず、普通のメッセージとして送られます（[#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)）。引数なしの `/sentinel` と `/unlock` は使えます。修正されるまでは、モードは YAML の `mode` で切り替えてください。
 
+引数は任意です。入力欄に `/sentinel ` と打つと、引数を入力するまで候補がプレースホルダとして表示されます。
+
 ### `/unlock` コマンド
 
 - 入力禁止（`block` / `both` モード）で失効しているセッションで `/unlock` を実行すると、次の送信を 1 回だけ許可します。許可は `unlockTtlMinutes`（既定 10 分）で失効します。

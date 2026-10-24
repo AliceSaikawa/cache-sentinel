@@ -69,6 +69,8 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
 - `/sentinel default`：清除通过 `/sentinel` 保存的模式，恢复为 YAML 中的 `mode` 设置。
 - 注意：在官方 Web UI 中，带参数的 `/sentinel`（`block`、`archive`、`both`、`off`、`default`）目前无法从输入框执行，会作为普通消息发送（[#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)）。不带参数的 `/sentinel` 和 `/unlock` 可以使用。在修复之前，请通过 YAML 中的 `mode` 切换模式。
 
+参数可选。在输入框中输入 `/sentinel ` 后，在输入参数之前，候选项会以占位文字的形式显示。
+
 ### `/unlock` 命令
 
 - 在因禁止输入（`block` / `both` 模式）而过期的会话中执行 `/unlock`，会仅允许下 1 次发送。该许可在 `unlockTtlMinutes`（默认 10 分钟）后失效。
