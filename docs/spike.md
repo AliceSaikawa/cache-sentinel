@@ -111,7 +111,8 @@
 
 `$PK` = 各版の `node_modules/@deepseek-ai`。方法は、npm から 0.2.1-alpha.1〜alpha.5 と 0.2.1-rc.1 の
 該当パッケージを取得し、型定義(`lib/types/*.d.ts`)と実装(`lib/index.js` など)を 0.2.0-rc.2 と diff したもの。
-行番号は特記なければ rc.1 のもの。DSH の実機起動はしていない(0.2.0-rc.2 の実機確認は上記の各節で実施済み)。
+行番号は特記なければ rc.1 のもの。この調査の時点では DSH の実機起動はしていない。0.2.0-rc.2 と 0.2.1-rc.1 の実機確認は
+2026-10-18 に同じ手順で行った([dsh-version-check.md](dsh-version-check.md))。
 同じ比較は `scripts/dsh-compat.ts` で再実行できる(使い方は README の Development 節)。
 
 ## lib の一致状況(package.json と CHANGELOG を除く)
@@ -128,7 +129,7 @@
 | 2 Session / command イベント | 変更なし | 内部実装のみ | 変更なし | 変更なし |
 | 3 `commands.register` | 変更なし | 変更なし | 変更なし | 変更なし |
 | 4 `workspaceRegistry` / `sessionPersistence.list()` | 変更なし | 任意項目 `formatStatus` の追加のみ | 同左 | 同左 |
-| 5 `connection.fetch.register` | 変更なし | 型は同じ(信頼判定の変更のみ) | 同左 | 型は同じ。owner 以外の Peer に exact route が 403 |
+| 5 `connection.fetch.register` | 変更なし | 型は同じ(信頼判定の変更のみ) | 同左 | 型は同じ。owner 以外の Peer に exact route が 403(配布物の HTTP 経路では owner 以外の Peer は無い) |
 | 6 セッションログの配置 | 変更なし | 変更なし | 変更なし | 変更なし |
 | 7 クライアント(`dsh.client`・`conversation.input.dock`・`remote.commands.execute`) | 変更なし | 変更なし | 変更なし | 変更なし |
 | 8 バンドルの提供サービス | 変更なし | 変更なし | 変更なし | 変更なし |
@@ -158,6 +159,21 @@ dsh-web-app、dsh-headless、cordis。
 5. connection: 提供元は `@deepseek-ai/dsh-client-connection`(dsh-web-app の `id: connection` 行)。
    `ConnectionFetchRoute` は `rpc.d.ts:119-132`、`register` は `:140`。rc.1 では owner 以外の Peer に 403
    (`lib/index.js:830`)。ブラウザは owner(`:714`)。
+   訂正(2026-10-18、実機確認のあと): rc.1 の配布物では、HTTP で来るリクエストの Peer は owner しかない。
+   HTTP の受け口 `admit`(`lib/index.js:742-750`)が返す Peer は、ブラウザ用(`:714`)か `publishPeer`(`:781-790`)で
+   作ったもので、どちらも `principal: { kind: "owner" }`。`Principal` の元になる `PrincipalMap` にも `owner` しか無い
+   (`$PK/dsh-typert-protocol/lib/types/types.d.ts:363-370`)。
+   `admit` は、Cookie の payload が version 1(ブラウザ用。`:278`・`:546-548`)なら `browserPeer` を返す(`:746`)。
+   ブラウザ以外の接続元は、`/connect` に launch token を付けて version 2 の API 用 Cookie を受け取り(`:505-538`)、
+   `authenticateApi`(`:555-558`)で `publishPeer` の Peer に解決される(`:747-749`)。
+   `peers.set` は `publishPeer` の中(`:786`)にしか無く、`createPeer`(`:752`)で作った Peer が HTTP の fetch handler
+   (`:868`・`:1055`、どちらも `admit` の結果を渡す)に届く経路は無い。
+   したがって以前の README の「ブラウザ以外の接続元は 403」は誤り。exact route 固有の 403(`:830`)は、rc.1 の HTTP 経路では
+   プラグインの有無にかかわらず起きない。Host/Origin の検査による 403(`:743`、応答は `:1050-1052`)はこれとは別で、
+   この route でも起きる。
+   実機では Cookie 付きの curl で 200 が返った([dsh-version-check.md](dsh-version-check.md) の手順 13)が、使った Cookie の
+   種類は記録に残っていない。ブラウザ用の Cookie だった可能性があり、`/connect` の API 認証の経路は上のとおりコードを
+   読んで確認しただけで、実機では通していない。
 6. ログ配置: `$PK/dsh-session-persistence-jsonl/lib/index.js:745-965` は rc.2 と同一。`encodeSegment`
    (`:858`)は `~XXXX`、ファイル名は `session.v4.jsonl[.zstd]`、`SESSION_FORMAT_VERSION` は 4。
    root は dsh-base の `dshHomePath('sessions')`。

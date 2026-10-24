@@ -13,7 +13,7 @@ For sessions where the prompt cache lifetime has passed, this plugin prevents ac
 - **Input blocking (`block`)**: Keeps the session open and readable while stopping the messages you send to the model. Work the agent is already doing (tool runs, jobs, subagents, goals, reminders) keeps going. When you want to continue sending, you can allow just the next send using the button above the input box or the `/unlock` command.
 - **Auto-archiving (`archive`)**: Automatically archives sessions that have not been updated for a while, hiding them from the sidebar so they cannot be opened.
 
-You can switch at any time from the chat `/sentinel` command to `both` mode, which combines both (input blocking after 60 minutes, archiving after 24 hours), or `off` mode, which temporarily disables the feature.
+You can switch at any time from the chat `/sentinel` command to `both` mode, which combines both (input blocking after 60 minutes, archiving after 24 hours), or `off` mode, which temporarily disables the feature. (In the official Web UI, `/sentinel` with an argument currently cannot be run from the input box: [#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36).)
 
 ## Installation
 
@@ -67,6 +67,7 @@ You can check the current status and switch modes from the chat input box.
 - `/sentinel`: Shows the current effective mode and its source (set via `/sentinel` / set in YAML), thresholds, elapsed minutes since the last response in this session, and `dryRun` status.
 - `/sentinel block` | `archive` | `both` | `off`: Switches the effective mode. It is saved to `$DSH_HOME/cache-sentinel/state.json` and preserved across DSH restarts (takes precedence over `mode` in YAML).
 - `/sentinel default`: Clears the mode saved via `/sentinel` and reverts to the `mode` setting in YAML.
+- Note: in the official Web UI, `/sentinel` with an argument (`block`, `archive`, `both`, `off`, `default`) currently cannot be run from the input box. It is sent as a normal message instead ([#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)). `/sentinel` without an argument and `/unlock` work. Until this is fixed, switch modes with `mode` in YAML.
 
 ### `/unlock` Command
 
@@ -207,9 +208,9 @@ See [docs/](docs/README.md) for design, specifications, and investigation detail
 ## Supported Versions and Environment
 
 - **DeepSeek Harness (DSH)**: **0.2.0-rc.2 to 0.2.1-rc.1** (including 0.2.1-alpha.1 to alpha.5)
-  - **0.2.0-rc.2**: verified on a real environment.
-  - **0.2.1-alpha.1 to alpha.5 and 0.2.1-rc.1**: the type definitions and implementations of the APIs that cache-sentinel uses were compared against 0.2.0-rc.2 (2026-10-17). Not verified on a real environment. In 0.2.1-rc.1, the status API returns 403 for connections other than the browser (in that case the pre-send banner is simply not shown).
-  - See [docs/spike.md](docs/spike.md) for the evidence. To check a newer version, run [scripts/dsh-compat.ts](scripts/dsh-compat.ts).
+  - **0.2.0-rc.2 and 0.2.1-rc.1**: verified on a real environment with DSH as released on npm (`web` profile, 2026-10-18): input blocking, `/unlock`, `/sentinel` (without an argument from the input box; with an argument only through the RPC `commands/execute`, see [#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)), the archive cycle, the block notice in the conversation, and the banner above the input box. Both versions gave the same results. The cache-sentinel used was commit `86a77f6` on main, which is before the fix for the banner button ([#34](https://github.com/AliceSaikawa/cache-sentinel/pull/34)); the button did not work in that build. The fixed button has been verified on 0.2.0-rc.2 only. See [docs/dsh-version-check.md](docs/dsh-version-check.md).
+  - **0.2.1-alpha.1 to alpha.5**: not verified on a real environment. The type definitions and implementations of the APIs that cache-sentinel uses were compared against 0.2.0-rc.2 (2026-10-17). See [docs/spike.md](docs/spike.md).
+  - To check a newer version, run [scripts/dsh-compat.ts](scripts/dsh-compat.ts).
 - **DSH profiles**: `web` and `desktop`, that is, profiles whose `dsh.profile.bundles` includes `@deepseek-ai/dsh-web-app` (custom profiles created from the `web` template also qualify). cache-sentinel requires the `workspaceRegistry` and `connection` services, which only that bundle provides.
   - In other profiles such as `headless` and `acp`, cache-sentinel does not start. It keeps waiting for those services, so input blocking, archiving, `/sentinel`, and `/unlock` are all unavailable. No error is reported, and the `[cache-sentinel]` startup log line does not appear.
   - `desktop` uses the same bundle as `web` but has not been verified on a real environment. The npm `dsh` CLI rejects plugin management for the `desktop` profile, so add the plugin with the `dsh` command installed with the Desktop app.
