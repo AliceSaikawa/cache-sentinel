@@ -16,6 +16,8 @@ const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
   icon: string
   files: string[]
   exports: Record<string, string | { default: string }>
+  peerDependencies: Record<string, string>
+  engines?: Record<string, string>
   dsh: { bundle: { patch: string } }
 }
 
@@ -45,4 +47,30 @@ test('main・exports・icon・バンドルの patch が指すファイルは git
 test('icon は DSH が読める形式・大きさ(SVG / PNG / JPEG / WebP、256 KiB 以下)', () => {
   assert.equal(manifest.icon, './icon.svg')
   assert.ok(statSync(resolve(root, manifest.icon)).size <= 256 * 1024)
+})
+
+test('対応する DSH の版を peerDependencies で宣言している', () => {
+  assert.deepEqual(manifest.peerDependencies, { '@deepseek-ai/dsh': '>=0.2.0-rc.2 <=0.2.1-rc.2' })
+})
+
+test('engines.dsh を宣言していない(あると DSH は peerDependencies を見ずに engines.dsh だけで判定する)', () => {
+  assert.equal(manifest.engines?.dsh, undefined)
+})
+
+test('README 3 言語に package.json と同じ対応範囲が書かれている', () => {
+  const range = manifest.peerDependencies['@deepseek-ai/dsh']
+  assert.ok(range, '@deepseek-ai/dsh の peer が無い')
+  const bounds = /^>=(\S+) <=(\S+)$/.exec(range)
+  assert.ok(bounds, `範囲の形が想定外: ${range}`)
+  const [, lower, upper] = bounds
+  const headings: Record<string, string> = {
+    'README.md': `**${lower} to ${upper}**`,
+    'README.ja.md': `**${lower} 〜 ${upper}**`,
+    'README.zh-CN.md': `**${lower} ～ ${upper}**`,
+  }
+  for (const [file, heading] of Object.entries(headings)) {
+    const text = readFileSync(resolve(root, file), 'utf8')
+    assert.ok(text.includes(`"@deepseek-ai/dsh": "${range}"`), `${file} に宣言の値 ${range} が無い`)
+    assert.ok(text.includes(heading), `${file} に対応範囲 ${heading} が無い`)
+  }
 })

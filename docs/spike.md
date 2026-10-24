@@ -184,6 +184,166 @@ dsh-web-app、dsh-headless、cordis。
    `timer`・`sessions`・`sessionPersistence`・`commands` を提供。`workspaceRegistry` と `connection` は
    dsh-web-app だけ。そのため headless では cache-sentinel は起動しない(全版共通)。
 
+## rc.2 の追加調査 (2026-10-23) — 対応範囲を 0.2.1-rc.2 まで広げる根拠
+
+`node scripts/dsh-compat.ts /var/tmp/dsh-compat 0.2.1-rc.1 0.2.1-rc.2` を実行した。16 パッケージ中 diff は
+dsh-client-modules・dsh-base・dsh-web-app の 3 つで、他の 13 は `package.json` を除いて rc.1 と同一。
+行番号は特記なければ rc.2 のもの。
+
+| 項目 | rc.2 |
+|---|---|
+| 1 `agent/pre-step` | 変更なし(dsh-agent・dsh-agent-loop・dsh-compaction-basic が rc.1 と同一) |
+| 2 Session / command イベント | 変更なし(dsh-session・dsh-commands が同一) |
+| 3 `commands.register` | 変更なし(dsh-commands が同一) |
+| 4 `workspaceRegistry` / `sessionPersistence.list()` | 変更なし(dsh-workspace・dsh-session-persistence(-jsonl) が同一) |
+| 5 `connection.fetch.register` | 変更なし(dsh-client-connection が同一) |
+| 6 セッションログの配置 | 変更なし(dsh-session-persistence-jsonl が同一) |
+| 7 クライアント(`dsh.client`・`conversation.input.dock`・`remote.commands.execute`) | 変更なし(dsh-client-modules の差分はビルド識別子 1 行のみ。dsh-client-ui-conversation・dsh-client-ui-slots は同一) |
+| 8 バンドルの提供サービス | 変更なし。dsh-base の差分は web / web-deepseek-api の行の追加、dsh-web-app の差分は行の追加のみで、いずれも `workspaceRegistry`・`connection`・`timer`・`sessions`・`sessionPersistence`・`commands` の行は変わらない |
+
+1〜8 の根拠:
+1. `$PK/dsh-agent/lib/types/runtime-types.d.ts` と `dsh-agent-loop/lib/index.js` が rc.1 と同一(pre-step の
+   payload・`PreStepDecision`・reject 時の `blocked` 終了・prepend の扱いも同じ)。
+2. `$PK/dsh-session/lib/types/*.d.ts` と `lib/index.js`、`$PK/dsh-commands/lib/types/types.d.ts` が同一。
+3. `$PK/dsh-commands/lib/types/index.d.ts` が同一。
+4. `$PK/dsh-workspace/lib/types/index.d.ts`、`$PK/dsh-session-persistence/lib/types/index.d.ts`、
+   `$PK/dsh-session-persistence-jsonl/lib/index.js` が同一。
+5. `$PK/dsh-client-connection/lib/index.js` と `lib/types/rpc.d.ts` が同一。
+6. `$PK/dsh-session-persistence-jsonl/lib/index.js` が同一(ログの配置・ファイル名・`SESSION_FORMAT_VERSION`)。
+7. クライアント: `$PK/dsh-client-modules/lib/index.js:540` の `const commit = "332895e"` だけが rc.1 の
+   `"ed75efe"` と違う(どちらもファイル全体で 42,376 バイト)。`dsh.client` の解析・inject の先行読み込みの
+   コードは rc.1 と同一行。`conversation.input.dock` のスロット契約(`dsh-client-ui-conversation/lib/types/client/contract/slots.d.ts`)も同一。
+8. バンドル: `$PK/dsh-base/cordis.patch.yml:475-479` が `web-deepseek-api` の行を足しただけ
+   (同ファイルの 464-466 のコメントも更新)。`$PK/dsh-web-app/cordis.patch.yml:415-417` が
+   `ui-deepseek-model-label-1017` の行を足しただけ。どちらも cache-sentinel が inject するサービスの行ではない。
+
+壊れる箇所は rc.2 でも見つからなかった。rc.2 は「型と実装の比較」で確認した範囲で、実機での確認は別。
+
+---
+
+# 対応 DSH 版の宣言とその評価 (2026-10-23, DSH 0.2.1-rc.2) — Issue #31
+
+`$PK` = `/home/user/.local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai`(以下「現行版」)。
+比較用の旧版(0.2.0-rc.2)は `npm pack @deepseek-ai/<名前>@0.2.0-rc.2` で取得した tarball を展開したもの。
+以下「0.2.0-rc.2 の `dsh-app-boot/lib/index.js`」などは、その tarball 内のパス(`package/` を除く)。
+`@deepseek-ai/dsh@0.2.0-rc.2` は `dsh-app-boot`・`dsh-plugin-manager` をどちらも `0.2.0-rc.2` に固定している
+(0.2.0-rc.2 の `dsh/package.json:33,100`)。
+
+## K1: どのフィールドを評価するか — 確定
+
+- プラグインの `package.json` を見る。評価するのは **`engines.dsh` が最優先で、あれば `peerDependencies` は
+  見ない**。無ければ `peerDependencies` のうち **`@deepseek-ai/dsh` と `@deepseek-ai/dsh-*` の名前だけ** を見る。
+  それ以外の名前の peer(例: `@deepseek-ai/cordis`)は範囲に含まれない。宣言がどちらも無ければ制約なし。
+  根拠: 現行版 `dsh-app-boot/lib/index.js:280-299`(`unmetRequirements`)、同じ説明が
+  `dsh-app-boot/README.md:52`。
+- 比較は **semver の `satisfies(runtimeVersion, range, { includePrerelease: true })`**(同 `:276-277`)。
+  prerelease(rc / alpha)も範囲に参加する。空文字の範囲は不一致、`engines.dsh` の `workspace:` も不一致。
+  ただし peer の `workspace:^` / `workspace:~` / `workspace:*` は現行 runtime と同値とみなす(同 `:290-295`)。
+- runtime 版は `@deepseek-ai/dsh-app-boot` 自身の `package.json` の `version`(同 `:270-275`)。現行版では
+  どちらも `0.2.1-rc.2`(`dsh/package.json:4`、`$PK/dsh-app-boot/package.json:4`)。
+- 0.2.0-rc.2 にも同じ仕組みがある(やや古い形)。根拠: 0.2.0-rc.2 の `dsh-app-boot/lib/index.js:286-313`
+  (`evaluatePluginCompatibility`)、拒否の文面は `:320-323`。
+  - `engines` は見ず、`peerDependencies` の `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` を
+    `includePrerelease: true` で比較する(`:289-300`)。`workspace:` の扱いと「空範囲は不一致」も同じ。
+  - 評価する場所も現行版と同じで、起動時の plugin 行(`:2079`)と、プロファイルのバンドル(`dsh.profile.bundles`)の
+    両方。バンドルは `loadProfileDirectory` が `evaluatePluginCompatibility(bundleManifest, exemptions)` を呼び
+    (`:930`)、合わなければ throw して `skippedBundles` に入れる(`:931`・`:940-945`)。
+  - 0.2.0-rc.2 に無いのは `engines.dsh` の扱いだけ。インストール時の事前検査は 0.2.0-rc.2 にもある(K2)。
+
+## K2: どの段階で検査するか — 確定
+
+- **インストール時**(`dsh plugin add` / `install`): pnpm を実行する前に検査する。ローカルのパス指定は
+  その `package.json` を読み、レジストリ指定は選ばれる版の `engines` と `peerDependencies` を見る。
+  満たさない場合は pnpm を実行せずに操作を拒否する(ダウンロードもビルドスクリプトも走らない)。
+  git・tarball 指定は取得そのものが要るため、インストール後に判定し、プロファイルの `package.json` と
+  ロックファイルを元に戻す。根拠: `$PK/dsh-plugin-manager/README.md:69`。
+  0.2.0-rc.2 でも同じで、`@deepseek-ai/dsh@0.2.0-rc.2` が依存する `dsh-plugin-manager@0.2.0-rc.2` の `README.md:63` と
+  `lib/index.js:500-514` で、pnpm を動かす前に `evaluatePluginCompatibility` で判定し、合わなければ
+  「nothing was installed」で拒否する(レジストリ指定は registry から選ばれる版の `package.json` を見る)。
+  0.2.0-rc.2 は `engines` を見ないので、見るのは peer だけ。
+- **プロファイル起動時(バンドル)**: cache-sentinel は `dsh.bundle.patch` を持つバンドルで、`dsh plugin add` で
+  入れるとプロファイルの `dsh.profile.bundles` に入る(`$PK/dsh-plugin-manager/README.md:40`
+  「Installation enables a new bundle by default」)。バンドルは読み込む前に評価され(現行版
+  `dsh-app-boot/lib/index.js:1025-1026`)、満たさなければ catch で `skippedBundles` に入る(`:1035-1040`)。
+  起動時に `:537-538` が stderr に `skipping profile bundle "cache-sentinel": <理由>` と出す。
+  スキップされたバンドルは patch(`cordis.patch.yml`)ごと読まれないので、Host の行も、行から読み込まれる
+  クライアント(`dsh.client`)も無くなる(クライアントは有効な Loader の行から集める: `$PK/dsh-client-modules/README.md:12`)。
+  cache-sentinel に主に効くのはこのバンドル単位のスキップ。
+- **プロファイル起動時(plugin 行)**: 構成する各行も、読み込む前に評価する。満たさない行は `disabled` にして
+  `stderr` に理由を出し、**そのプラグインは読み込まない**(起動全体は止まらない)。
+  根拠: 現行版 `dsh-app-boot/lib/index.js:2311-2345`(`preflight`、`evaluatePluginCompatibility` は `:2327`)、
+  拒否の文面は同 `:333-336`。cache-sentinel の行はバンドルの patch から来るので、バンドルが読み込まれたときの
+  二重の検査になる。免除のキーはどちらも `cache-sentinel@<版>`(`:316-318`)なので、同じ免除で両方を通る。
+- 免除: プロファイルの `compatibility.json` に「`<プラグイン名>@<版>` → 許可する DSH の完全な版の一覧」を
+  書く。**プラグインの版と DSH の版の組ごとの完全一致**で、範囲では書けない。付与は
+  `dsh plugin --profile <profile> allow-version <package@version> --dsh-version <runtime> --accept-risk`、
+  取り消しは `revoke-version`、一覧は `version-exemptions`。
+  根拠: `$PK/dsh-plugin-manager/README.md:71-75`、`@deepseek-ai/dsh/README.md:39`(DSH 本体のパッケージ直下)、現行版
+  `dsh-app-boot/lib/index.js:336-345,415-425`。
+- 0.2.0-rc.2 にもインストール時・起動時の拒否と免除はある(0.2.0-rc.2 の `dsh-app-boot/lib/index.js:322` の文面に
+  `dsh plugin allow-version` が出る。CLI は `dsh-plugin-manager/README.md:69`)。無いのは `engines.dsh` だけ(K1)。
+
+## K3: 公式プラグインの宣言 — 確定
+
+- 現行版の `@deepseek-ai/dsh-*` 294 パッケージ中 171 が DSH の peer を宣言している(DSH 本体の
+  `node_modules` 以下にある `@deepseek-ai/dsh-*` の `package.json` を、入れ子の `node_modules` も含めて集め、
+  `name@version` で重複を除いて数えた)。**すべて
+  `peerDependencies` に `"<name>": "<正確な版>"`(例: `"@deepseek-ai/dsh-agent": "0.2.1-rc.2"`)で、
+  `engines` を持つものは 1 つも無い。**
+- したがって外部プラグインが広い範囲を宣言する例は DSH 本体には無い。cache-sentinel は対応範囲が
+  「同一リリースではない複数の版」なので、正確な版ではなく範囲を書く。評価は K1 の `satisfies` なので範囲でよい。
+
+## K4: 宣言する範囲 — 確定
+
+`peerDependencies` に `"@deepseek-ai/dsh": ">=0.2.0-rc.2 <=0.2.1-rc.2"` を書く(`engines.dsh` は使わない。
+K3 のとおり公式の前例が無く、`engines.dsh` を書くと peer を書いても無視されるため、片方に絞る)。
+
+現行版と同じ semver(`$PK/../semver/index.js`、7.8.5)の `satisfies(v, range, { includePrerelease: true })` で
+評価した結果:
+
+| DSH の版 | 範囲内か |
+|---|---|
+| 0.2.0-rc.1(以前) | 範囲外 |
+| 0.2.0-rc.2 | 範囲内 |
+| 0.2.1-alpha.1〜alpha.5 | 範囲内 |
+| 0.2.1-rc.1 | 範囲内 |
+| 0.2.1-rc.2 | 範囲内 |
+| 0.2.1-rc.3 | 範囲外 |
+| 0.2.1(正式版) | 範囲外 |
+| 0.2.2 / 0.3.0 | 範囲外 |
+
+- `<=0.2.1-rc.2` は semver の順序で「0.2.1-rc.2 まで」を意味し、`0.2.1-rc.3` と `0.2.1` は入らない。
+  一方 `0.2.0-rc.2` 〜 `0.2.1-rc.2` の間にある prerelease はすべて入る(0.2.1-alpha.1〜alpha.5 を含む)。
+  実機で確認していない alpha 系が範囲に入るのは、Issue #12 の対応範囲(README の記載)と同じ考え方。
+- 検討した別案: `<0.2.1` は 0.2.1-rc.3 が入るため不可。`^0.2.1-rc.2` は 0.2.0-rc.2 と alpha 系が入らないため不可。
+  `>=0.2.0-rc.2` だけでは 0.2.2 以降も入るため不可。
+- 正式版 `0.2.1` は範囲に入れない(2026-10-23 時点で未リリース。入れると未確認の版を許可することになる)。
+
+## K5: 宣言の副作用 — 確定(注意点)
+
+- この宣言により、**範囲外の DSH では K2 のとおり拒否される**。cache-sentinel はバンドルとして評価されるので、
+  起動時はバンドル単位でスキップされ(Host もクライアントも読み込まれない)、起動自体は続く。
+  インストール時は pnpm を動かす前に拒否される。免除は `compatibility.json` に完全一致の版の組で書く必要があり、
+  範囲では免除できない。
+- 上限を固定しているので、DSH の rc.3 や 0.2.1 正式版が出ると、更新した時点で cache-sentinel は自動でスキップされ、
+  入力禁止などのガードが外れる(fail-open)。気づく手がかりは起動時の stderr の `skipping profile bundle` だけ。
+  Issue #31 の意図どおり(未確認の版では動かさない)だが、新しい版が出たら K6 の手順で範囲を見直す。
+- インストール時の事前検査は「プロファイルの依存を解決した版の `package.json`」を見るため、
+  `github:` 指定では取得後、レジストリ指定では選ばれる版の宣言が評価される。
+
+## K6: 新しい DSH の版が出たときの手順
+
+1. 互換調査: `node scripts/dsh-compat.ts <作業ディレクトリ> <範囲の上限の版> <新しい版>` で、cache-sentinel が使う
+   パッケージの差分を取る(使い方は README の Development 節)。差分があれば、上の「DSH 0.2.1 系との互換調査」の
+   項目 1〜8 に照らして影響を調べ、この文書に追記する。壊れる箇所があれば、範囲を広げる前に直す。
+2. 宣言の更新: `package.json` の `peerDependencies` の上限(`<=<版>`)を新しい版にする。正式版や次の minor に
+   広げる場合は、K4 の表のように範囲内・範囲外の版を挙げて `satisfies` の結果を確かめる。
+3. テストの更新: `tests/package.test.ts` の宣言の値を新しい範囲にする。README 3 言語に同じ範囲が書かれているかも
+   同じファイルのテストで確かめている。
+4. README 3 言語の「Supported Versions and Environment」を更新する: 見出しの範囲、宣言の値、新しい版を
+   「実機で確認」か「型と実装の比較のみ」かに分けて書く。実機で確かめた場合は記録を `dsh-version-check.md` に足す。
+5. `pnpm test` と `pnpm typecheck` を通す(`src/` を変えた場合は `pnpm build` も)。
+
 ---
 
 # 表示言語の調査 (2026-10-17, DSH 0.2.0-rc.2)

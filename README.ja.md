@@ -210,8 +210,10 @@ node scripts/dsh-compat.ts /var/tmp/dsh-compat 0.2.1-rc.1 0.2.1-rc.2
 
 ## 対応バージョン・動作環境
 
-- **DeepSeek Harness（DSH）**：**0.2.0-rc.2 〜 0.2.1-rc.1**（0.2.1-alpha.1〜alpha.5 を含む）
+- **DeepSeek Harness（DSH）**：**0.2.0-rc.2 〜 0.2.1-rc.2**（0.2.1-alpha.1〜alpha.5 を含む）
+  - 対応範囲は `package.json` の `peerDependencies`（`"@deepseek-ai/dsh": ">=0.2.0-rc.2 <=0.2.1-rc.2"`）で宣言しています。DSH はプラグインの追加時とプロファイル起動時にこの範囲を検査します。範囲外の DSH ではプラグインが拒否されて読み込まれません（DSH 自体の起動は続き、理由が表示されます）。どうしても動かす場合は、プロファイルの `compatibility.json` にプラグインの版と DSH の版の組を完全一致で免除します（`dsh plugin --profile <プロファイル> allow-version cache-sentinel@<版> --dsh-version <DSH の版> --accept-risk`）。**0.2.1 の正式版は範囲外**です（2026-10-23 時点で未リリースのため）。
   - **0.2.0-rc.2・0.2.1-rc.1**：npm で配布されている DSH の実機で確認（`web` プロファイル、2026-10-18）。確認した機能は、入力禁止・`/unlock`・`/sentinel`（引数なしは入力欄から。引数つきは RPC の `commands/execute` からのみ。[#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)）・アーカイブのサイクル・会話内のブロック通知・入力欄の上のバナー。2 つの版で結果は同じでした。使った cache-sentinel は main の `86a77f6` で、バナーのボタンの修正（[#34](https://github.com/AliceSaikawa/cache-sentinel/pull/34)）より前のため、ボタンは動きませんでした。修正後のボタンは 0.2.0-rc.2 でだけ確認しています。詳細は [docs/dsh-version-check.md](docs/dsh-version-check.md) を参照。
+  - **0.2.1-rc.2**：実機は未確認。cache-sentinel が使う API の型定義と実装を 0.2.1-rc.1 と比べて確認（2026-10-23）。違いは `dsh-client-modules` のビルド識別子と、`dsh-base`・`dsh-web-app` のバンドルへの行の追加だけでした。根拠は [docs/spike.md](docs/spike.md) を参照。
   - **0.2.1-alpha.1〜alpha.5**：実機は未確認。cache-sentinel が使う API の型定義と実装を 0.2.0-rc.2 と比べて確認（2026-10-17）。根拠は [docs/spike.md](docs/spike.md) を参照。
   - 新しい版が出たときの確認は [scripts/dsh-compat.ts](scripts/dsh-compat.ts) で行えます。
 - **DSH のプロファイル**：`web` と `desktop`。`dsh.profile.bundles` に `@deepseek-ai/dsh-web-app` を含むプロファイルが対象です（`web` のテンプレートから作ったプロファイルも含みます）。cache-sentinel が使う `workspaceRegistry` と `connection` のサービスは、このバンドルにしかありません。
