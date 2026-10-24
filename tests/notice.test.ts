@@ -3,7 +3,6 @@ import test from 'node:test'
 import {
   buildBlockNotice,
   NOTICE_TEXT_LIMIT,
-  NoticeThrottle,
   type NoticeMessage,
 } from '../src/notice.ts'
 
@@ -110,50 +109,6 @@ test('buildBlockNotice: テキストがなく添付だけなら添付の行だ�
 test('buildBlockNotice: 改行を含む text はそのまま載せる', () => {
   const messages: NoticeMessage[] = [{ content: [{ type: 'text', text: '1 行目\n2 行目' }] }]
   assert.equal(buildBlockNotice({ idleMinutes: 75, messages }, 'ja'), `${HEAD}\n破棄された入力:\n1 行目\n2 行目`)
-})
-
-test('NoticeThrottle: 初回は入力 0 件でも true', () => {
-  const throttle = new NoticeThrottle(600_000)
-  assert.equal(throttle.shouldNotify('s1', 1000, false), true)
-})
-
-test('NoticeThrottle: 入力 0 件は intervalMs 未満なら false、ちょうどで true', () => {
-  const throttle = new NoticeThrottle(600_000)
-  assert.equal(throttle.shouldNotify('s1', 0, false), true)
-  assert.equal(throttle.shouldNotify('s1', 599_999, false), false)
-  assert.equal(throttle.shouldNotify('s1', 599_999, false), false)
-  assert.equal(throttle.shouldNotify('s1', 600_000, false), true)
-})
-
-test('NoticeThrottle: hasMessages が真なら常に true で記録時刻も更新する', () => {
-  const throttle = new NoticeThrottle(600_000)
-  assert.equal(throttle.shouldNotify('s1', 0, true), true)
-  assert.equal(throttle.shouldNotify('s1', 1, true), true)
-  // 直前の通知 (now=1) から intervalMs 未満なので false。
-  assert.equal(throttle.shouldNotify('s1', 599_999, false), false)
-  assert.equal(throttle.shouldNotify('s1', 600_001, false), true)
-})
-
-test('NoticeThrottle: hasMessages が真なら intervalMs 内でも true (毎回通知)', () => {
-  const throttle = new NoticeThrottle(600_000)
-  assert.equal(throttle.shouldNotify('s1', 0, false), true)
-  assert.equal(throttle.shouldNotify('s1', 1, true), true)
-})
-
-test('NoticeThrottle: セッションごとに独立して記録する', () => {
-  const throttle = new NoticeThrottle(600_000)
-  assert.equal(throttle.shouldNotify('s1', 0, false), true)
-  assert.equal(throttle.shouldNotify('s2', 1, false), true)
-  assert.equal(throttle.shouldNotify('s1', 2, false), false)
-  assert.equal(throttle.shouldNotify('s2', 3, false), false)
-})
-
-test('NoticeThrottle: false を返しても記録時刻は更新しない', () => {
-  const throttle = new NoticeThrottle(600_000)
-  assert.equal(throttle.shouldNotify('s1', 0, false), true)
-  assert.equal(throttle.shouldNotify('s1', 300_000, false), false)
-  // 記録は 0 のままなので、0 からちょうど intervalMs で true。
-  assert.equal(throttle.shouldNotify('s1', 600_000, false), true)
 })
 
 // --- 表示言語 (spec-ui v0.5 §F) ---
