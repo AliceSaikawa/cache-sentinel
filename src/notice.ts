@@ -192,3 +192,49 @@ export class NoticeDedupe {
     }
   }
 }
+
+/** 保留中の通知。書いた後に抑制 (#30) の記録へ渡すため、比較キーも一緒に持つ。 */
+export interface HeldNotice {
+  /** 会話に書く文面 (`buildBlockNotice`)。 */
+  readonly text: string
+  /** 連続通知の比較キー (`noticeDedupeKey`)。 */
+  readonly key: string
+}
+
+/**
+ * turn の外に書くまで取っておくブロック通知 (spec-ui §D、#27)。
+ *
+ * 拒否した時点では書かず、そのセッションの `agent/status` が `idle` に戻ったときに書く。
+ * これで通知が blocked の turn の折りたたみの奥に入らず、送信直後に最上位の行として見える
+ * (根拠は spike.md「通知を turn の外に書く」)。
+ *
+ * 保留はセッションごとに**最新の 1 件だけ**持つ。同じセッションで続けて拒否されたら、
+ * 前の保留は捨てて新しい方だけを書く (古い通知を遅れて積み増さない)。
+ * 書けなかった保留は捨てる (捨てたことは呼び出し側が info ログに残す)。
+ * DSH には依存しない。
+ */
+export class PendingNotices {
+  /** セッション id → そのセッションで最後に拒否したときの通知。 */
+  private readonly pending = new Map<string, HeldNotice>()
+
+  /** そのセッションの保留を差し替える (古い保留があれば捨てる)。 */
+  hold(sessionId: string, notice: HeldNotice): void {
+    this.pending.set(sessionId, notice)
+  }
+
+  /**
+   * そのセッションの保留を取り出して消す。
+   * 保留が無ければ undefined (書き出すものは無い)。
+   */
+  take(sessionId: string): HeldNotice | undefined {
+    const notice = this.pending.get(sessionId)
+    if (notice === undefined) return undefined
+    this.pending.delete(sessionId)
+    return notice
+  }
+
+  /** 保留を持っているセッションの数 (テストと後始末のため)。 */
+  get size(): number {
+    return this.pending.size
+  }
+}

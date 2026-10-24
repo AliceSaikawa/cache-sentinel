@@ -5,6 +5,9 @@
  * `/unlock` で次の送信を 1 回だけ許可する。ゲートが働くかは `isActive()`(実効モード)で毎回決める。
  * 会話への通知は、同じ文面が連続するときだけ 10 分に 1 件に抑える(spec-ui §D、#30)。拒否そのものは毎回行う。
  * 間にユーザーの送信が通れば、連続とはみなさない。
+ * 通知は拒否した時点では書かず、そのセッションの `agent/status` が idle に戻ったときに書く(#27)。
+ * これで通知が blocked の turn の折りたたみの奥に入らず、送信直後に最上位の行として見える
+ * (根拠は spike.md「通知を turn の外に書く」)。
  */
 import type { Config } from './config.ts'
 import { classifyStep, decideGate, type StepKind } from './gate.ts'
@@ -16,6 +19,8 @@ import {
   NoticeDedupe,
   NOTICE_DEDUPE_INTERVAL_MS,
   noticeDedupeKey,
+  PendingNotices,
+  type HeldNotice,
   type NoticeMessage,
   type NoticeSource,
 } from './notice.ts'
@@ -66,6 +71,9 @@ export type StepMessage = NoticeMessage & {
   readonly source?: NoticeSource & { readonly kind: string }
 }
 
+/** エージェントの状態(dsh-agent の `AgentStatus`、`runtime-types.d.ts:90`)。 */
+export type AgentStatus = 'idle' | 'running'
+
 /** `agent/pre-step` の payload のうち使う部分。 */
 export interface PreStepPayload {
   agent: AgentLike
@@ -86,6 +94,8 @@ export type CommandResult = { kind: 'success'; text?: string } | { kind: 'error'
 export interface Sentinel {
   onPreStep(payload: PreStepPayload, next: () => Promise<PreStepDecision>): Promise<PreStepDecision>
   onSessionEvent(session: SessionLike, event: TimedEvent): void
+  /** `agent/status` の遷移。idle で保留の通知を turn の外に書き、running で前のターンの保留を捨てる(#27)。 */
+  onAgentStatus(status: AgentStatus, session: SessionLike): void
   /** `/unlock`。ゲートが無効なら inactiveText を返す。 */
   unlock(agent: AgentLike, inactiveText: string): CommandResult
   /** 最終応答からの経過分(切り捨て)。応答がなければ undefined。 */
@@ -130,6 +140,7 @@ export function createSentinel(
   })
   const unlocks = new UnlockStore()
   const dedupe = new NoticeDedupe(NOTICE_DEDUPE_INTERVAL_MS)
+  const pending = new PendingNotices()
   const ttlMs = config.unlockTtlMinutes * 60_000
   let noticeCounter = 0
 
@@ -138,7 +149,26 @@ export function createSentinel(
    * 直前に出した通知と破棄された入力が同じなら、NOTICE_DEDUPE_INTERVAL_MS 未満は出さず info ログだけ残す
    * (spec-ui §D、#30)。
    */
-  const notify = (session: SessionLike, idleMinutes: number, messages: readonly NoticeMessage[]): void => {
+  const appendNotice = (session: SessionLike, notice: HeldNotice): void => {
+    if (session.append === undefined) return
+    const at = now()
+    const commandId = `cache-sentinel-${session.id}-${at}-${++noticeCounter}`
+    try {
+      session.append('command/run', { commandId, name: 'cache-sentinel', args: '', source: { kind: 'user' } })
+      session.append('command/done', { commandId, kind: 'error', text: notice.text })
+      // 会話に出せたときだけ「出した」と記録する。失敗した文面は次の拒否でまた通知する。
+      dedupe.record(session.id, at, notice.key)
+    } catch (error) {
+      log.warn(`ブロック通知を会話に追加できませんでした: ${session.id}: ${String(error)}`)
+    }
+  }
+
+  /**
+   * ブロック通知を保留する(#27)。拒否した時点では書かない。
+   * 抑制(#30)の判定はここで行う(拒否のたびに判定し、抑えるなら保留も作らない)。
+   * 実際に書くのは、そのセッションの `agent/status` が idle に戻ったとき(`onAgentStatus`)。
+   */
+  const holdNotice = (session: SessionLike, idleMinutes: number, messages: readonly NoticeMessage[]): void => {
     if (session.append === undefined) return
     const at = now()
     const key = noticeDedupeKey(messages, locale)
@@ -146,19 +176,7 @@ export function createSentinel(
       log.info(`同じ文面のブロック通知を抑えました: ${session.id} (最終応答から ${idleMinutes} 分)`)
       return
     }
-    const commandId = `cache-sentinel-${session.id}-${at}-${++noticeCounter}`
-    try {
-      session.append('command/run', { commandId, name: 'cache-sentinel', args: '', source: { kind: 'user' } })
-      session.append('command/done', {
-        commandId,
-        kind: 'error',
-        text: buildBlockNotice({ idleMinutes, messages }, locale),
-      })
-      // 会話に出せたときだけ「出した」と記録する。失敗した文面は次の拒否でまた通知する。
-      dedupe.record(session.id, at, key)
-    } catch (error) {
-      log.warn(`ブロック通知を会話に追加できませんでした: ${session.id}: ${String(error)}`)
-    }
+    pending.hold(session.id, { text: buildBlockNotice({ idleMinutes, messages }, locale), key })
   }
 
   const lastResponseOf = (session: SessionLike): number | undefined => {
@@ -226,12 +244,29 @@ export function createSentinel(
         return next()
       }
       log.info(`ブロックしました: ${where}。/unlock で次の送信を許可できます`)
-      notify(session, minutes, payload.messages)
+      holdNotice(session, minutes, payload.messages)
       return { kind: 'reject' }
     },
 
     onSessionEvent(session, event) {
       tracker.observe(session.id, event)
+    },
+
+    /**
+     * `agent/status` の遷移(#27)。
+     * - `idle`: そのセッションの保留の通知を書く。idle は blocked の `turn/end` の**後**に必ず 1 回来るので、
+     *   通知は turn の外に出る(spike.md「通知を turn の外に書く」Q2)。書けなかったら(append の失敗)warn を出して捨てる。
+     * - `running`: 保留が残っていれば捨てる。running は新しいドライバの開始で、そのステップの pre-step より前に来る
+     *   (同 Q6)ので、残っているのは idle が来なかった前のターンの通知。次のターンの下に遅れて出さない。
+     */
+    onAgentStatus(status, session) {
+      const notice = pending.take(session.id)
+      if (notice === undefined) return
+      if (status === 'running') {
+        log.info(`前のターンで保留したブロック通知を捨てました(idle が来ないまま次のターンが始まったため): ${session.id}`)
+        return
+      }
+      appendNotice(session, notice)
     },
 
     unlock(agent, inactiveText) {

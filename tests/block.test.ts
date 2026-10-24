@@ -91,6 +91,14 @@ function makeLogger() {
   return { log, debug, info, warn }
 }
 
+/**
+ * `agent/status` が idle に戻ったことを sentinel に伝える(#27)。
+ * 実機では blocked の `turn/end` の後に必ず来るので、通知はこの時点で書かれる。
+ */
+function goIdle(sentinel: ReturnType<typeof createSentinel>, session: SessionLike): void {
+  sentinel.onAgentStatus('idle', session)
+}
+
 /** 配列のどれかが条件を満たすか。失敗時に全要素を出す。 */
 function someMessage(messages: readonly string[], predicate: (m: string) => boolean): boolean {
   assert.ok(messages.some(predicate), `該当するログがありません:\n${messages.join('\n')}`)
@@ -367,8 +375,12 @@ test('D-append1: ブロックすると command/run → command/done を追加し
 
   assert.deepEqual(result, { kind: 'reject' })
   assert.equal(pass.calls(), 0)
-  assert.equal(appends.length, 2)
+  // #27: 拒否した時点では書かない (turn の中に入ってしまうため)。
+  assert.equal(appends.length, 0)
 
+  goIdle(sentinel, session)
+
+  assert.equal(appends.length, 2)
   assert.equal(appendAt(appends, 0).type, 'command/run')
   const run = appendAt(appends, 0).data as CommandRunData
   assert.match(run.commandId, /^cache-sentinel-/)
@@ -390,8 +402,10 @@ test('D-append2: 文面が変われば、間隔内でも commandId を変えて�
   const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
 
   await sentinel.onPreStep({ ...payload(session), messages: [textMessage('入力')] }, nextSpy().next)
+  goIdle(sentinel, session)
   clock.now = NOW + MINUTE
   await sentinel.onPreStep({ ...payload(session), messages: [textMessage('別の入力')] }, nextSpy().next)
+  goIdle(sentinel, session)
 
   assert.equal(appends.length, 4)
   const first = appendAt(appends, 0).data as CommandRunData
@@ -438,6 +452,7 @@ test('D-append6: 同じ文面の連打では通知を積み重ねず、他の文
     // 通知を抑えても拒否は毎回行う。
     assert.deepEqual(result, { kind: 'reject' }, `${i + 1} 回目`)
     assert.equal(pass.calls(), 0, `${i + 1} 回目`)
+    goIdle(sentinel, session)
   }
 
   assert.equal(appends.length, 2)
@@ -446,6 +461,7 @@ test('D-append6: 同じ文面の連打では通知を積み重ねず、他の文
     { ...payload(session), messages: [textMessage('別の入力')] },
     nextSpy().next,
   )
+  goIdle(sentinel, session)
   assert.equal(appends.length, 4)
 })
 
@@ -465,6 +481,9 @@ test('D-append7: append が例外を投げても reject を返し warn を出す
 
   assert.deepEqual(result, { kind: 'reject' })
   assert.equal(pass.calls(), 0)
+
+  // 書き出すのは idle のとき。ここで失敗しても落ちず、warn を出す。
+  goIdle(sentinel, session)
   someMessage(
     log.warn,
     (m) => m.includes('ブロック通知を会話に追加できませんでした') && m.includes('s1') && m.includes('disk full'),
@@ -473,12 +492,14 @@ test('D-append7: append が例外を投げても reject を返し warn を出す
 
 // --- #30: 連続通知の抑制 (spec-ui §D) ---
 
-/** 失効したセッションで、指定した文面の入力を 1 回送る。 */
+/** 失効したセッションで、指定した文面の入力を 1 回送り、idle まで進める (#27)。 */
 async function blockOnce(session: SessionLike, text: string) {
   const sentinel = SENTINELS.get(session)
   assert.ok(sentinel !== undefined, 'createSentinel を通した session を渡してください')
   const pass = nextSpy()
   const result = await sentinel.onPreStep({ ...payload(session), messages: [textMessage(text)] }, pass.next)
+  // 実機では reject の後に idle が来る。通知はそこで書かれる。
+  goIdle(sentinel, session)
   return { result, pass }
 }
 
@@ -619,7 +640,11 @@ test('D4: 会話への追加に失敗した通知は出したことにせず、�
     },
   }
   const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
-  const send = () => sentinel.onPreStep({ ...payload(session), messages: [textMessage('同じ入力')] }, nextSpy().next)
+  const send = async () => {
+    const result = await sentinel.onPreStep({ ...payload(session), messages: [textMessage('同じ入力')] }, nextSpy().next)
+    goIdle(sentinel, session)
+    return result
+  }
 
   assert.deepEqual(await send(), { kind: 'reject' })
   assert.equal(appends.length, 0)
@@ -636,8 +661,12 @@ function shortIdleSession(id: string, clock: { now: number }) {
   const log = makeLogger()
   const { session, appends } = appendingSessionWith(id, () => [{ type: 'step/end', time: NOW - 6 * MINUTE }])
   const sentinel = createSentinel({ ...CONFIG, idleMinutes: 5 }, log.log, 'ja', () => clock.now)
-  const send = (text: string, kind = 'user') =>
-    sentinel.onPreStep({ ...payload(session), messages: [textMessage(text, kind)] }, nextSpy().next)
+  /** 1 回送り、idle まで進める(#27。通知は idle で書かれる)。 */
+  const send = async (text: string, kind = 'user') => {
+    const result = await sentinel.onPreStep({ ...payload(session), messages: [textMessage(text, kind)] }, nextSpy().next)
+    goIdle(sentinel, session)
+    return result
+  }
   return { session, appends, sentinel, send }
 }
 
@@ -777,6 +806,7 @@ test('D-locale: ブロック通知は createSentinel に渡した言語で書く
   const messages: StepMessage[] = [textMessage('draft')]
 
   await sentinel.onPreStep({ ...payload(session), messages }, nextSpy().next)
+  goIdle(sentinel, session)
 
   const done = appendAt(appends, 1).data as CommandDoneData
   assert.equal(done.text, buildBlockNotice({ idleMinutes: 61, messages }, 'en'))
@@ -806,6 +836,8 @@ async function preStepOnExpired(
     { agent: agentOf(session), turn: step.turn ?? 3, step: step.step, messages: step.messages },
     pass.next,
   )
+  // #27: 通知は idle に戻ったときに書かれる。拒否そのものはここで終わっている。
+  goIdle(sentinel, session)
   return { result, pass, appends, log }
 }
 
@@ -895,6 +927,7 @@ test('#29: 出どころごとの文面は、前回と同じなら 10 分に 1 �
 
   const first = nextSpy()
   await SENTINELS.get(session)!.onPreStep({ ...payload(session), messages }, first.next)
+  goIdle(SENTINELS.get(session)!, session)
   assert.equal(appends.length, 2)
 
   // 同じ入力の連打は抑える。
@@ -904,12 +937,14 @@ test('#29: 出どころごとの文面は、前回と同じなら 10 分に 1 �
     await SENTINELS.get(session)!.onPreStep({ ...payload(session), messages }, second.next),
     { kind: 'reject' },
   )
+  goIdle(SENTINELS.get(session)!, session)
   assert.equal(appends.length, 2)
 
   // 出どころの summary が変われば文面が変わるので、間隔内でも通知する。
   clock.now = NOW + 2 * MINUTE
   const changed = [noticeMessage(REMINDER_TEXT, '別の説明'), textMessage('続けて')]
   await SENTINELS.get(session)!.onPreStep({ ...payload(session), messages: changed }, nextSpy().next)
+  goIdle(SENTINELS.get(session)!, session)
   assert.equal(appends.length, 4)
 })
 
@@ -939,6 +974,246 @@ test('B7: dryRun でも、止める対象でないステップに「ブロック
 
   assert.equal(result, pass.decision)
   assert.ok(!log.info.some((m) => m.includes('dryRun')), log.info.join('\n'))
+})
+
+// --- #27: 通知を turn の外 (idle 遷移) に書く (spec-ui §D) ---
+
+test('#27: reject の時点では書かず、idle に戻ったときに 1 回だけ書く', async () => {
+  const log = makeLogger()
+  const clock = { now: NOW }
+  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
+
+  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('入力')] }, nextSpy().next)
+
+  // 拒否した時点ではまだ書かない (turn の中に入ってしまうため)。
+  assert.equal(appends.length, 0)
+
+  goIdle(sentinel, session)
+
+  // idle で 1 回だけ書く。turn の外に出るので折りたたみの奥に入らない。
+  assert.equal(appends.length, 2)
+  assert.equal(appendAt(appends, 0).type, 'command/run')
+  assert.equal(appendAt(appends, 1).type, 'command/done')
+
+  // 同じ idle 遷移がもう一度来ても (idle → idle は DSH では emit されないが)、二重には書かない。
+  goIdle(sentinel, session)
+  assert.equal(appends.length, 2)
+})
+
+test('#27: idle が来ないまま running が来たら、前のターンの保留を捨てて info ログを出す', async () => {
+  const log = makeLogger()
+  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
+
+  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('古い入力')] }, nextSpy().next)
+
+  // 次のドライバの開始。保留は前のターンのものなので書かずに捨てる。
+  sentinel.onAgentStatus('running', session)
+  assert.equal(appends.length, 0)
+  assert.deepEqual(log.info.slice(-1), [
+    '前のターンで保留したブロック通知を捨てました(idle が来ないまま次のターンが始まったため): s1',
+  ])
+
+  // そのターンが通って idle に戻っても、古い通知は出ない。
+  sentinel.onAgentStatus('idle', session)
+  assert.equal(appends.length, 0)
+})
+
+test('#27: running の後に拒否した通知は、続く idle で書く', async () => {
+  const log = makeLogger()
+  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
+
+  // 実機の順: running(ドライバ開始)→ pre-step で拒否 → idle。
+  sentinel.onAgentStatus('running', session)
+  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('入力')] }, nextSpy().next)
+  sentinel.onAgentStatus('idle', session)
+
+  assert.deepEqual(
+    appends.map((a) => a.type),
+    ['command/run', 'command/done'],
+  )
+  assert.ok(!log.info.some((m) => m.includes('捨てました')), log.info.join('\n'))
+})
+
+test('#27: 保留を捨てた後の同じ文面は、抑えずに通知する(書けなかった通知は出したことにしない)', async () => {
+  const log = makeLogger()
+  const clock = { now: NOW }
+  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
+
+  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('同じ入力')] }, nextSpy().next)
+  sentinel.onAgentStatus('running', session)
+
+  clock.now = NOW + MINUTE
+  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('同じ入力')] }, nextSpy().next)
+  sentinel.onAgentStatus('idle', session)
+
+  assert.equal(appends.length, 2)
+})
+
+test('#27: 別セッションの idle では書かず、そのセッションの保留は残る', async () => {
+  const log = makeLogger()
+  const clock = { now: NOW }
+  const a = appendingSessionWith('a', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const b = appendingSessionWith('b', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
+
+  await sentinel.onPreStep({ ...payload(a.session), messages: [textMessage('A の入力')] }, nextSpy().next)
+
+  // 別セッション (b) の idle では a の保留は書かれない。
+  goIdle(sentinel, b.session)
+  assert.equal(a.appends.length, 0)
+  assert.equal(b.appends.length, 0)
+
+  // 正しいセッション (a) の idle で書かれる。
+  goIdle(sentinel, a.session)
+  assert.equal(a.appends.length, 2)
+  assert.equal(b.appends.length, 0)
+
+  const done = appendAt(a.appends, 1).data as CommandDoneData
+  assert.match(done.text, /A の入力$/)
+})
+
+test('#27: 保留はセッションごとに最新の 1 件だけ (古い通知は捨てる)', async () => {
+  const log = makeLogger()
+  const clock = { now: NOW }
+  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
+
+  // 文面の違う拒否を 2 回 (idle を挟まない)。1 件目の保留は捨てられる。
+  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('古い入力')] }, nextSpy().next)
+  clock.now = NOW + MINUTE
+  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('新しい入力')] }, nextSpy().next)
+
+  assert.equal(appends.length, 0)
+
+  goIdle(sentinel, session)
+
+  // 書かれるのは最新の 1 件だけ。古い通知は遅れて積み増されない。
+  assert.equal(appends.length, 2)
+  const done = appendAt(appends, 1).data as CommandDoneData
+  assert.match(done.text, /新しい入力$/)
+  assert.ok(!done.text.includes('古い入力'), done.text)
+})
+
+test('#27: 抑制 (#30) で抑えた拒否は保留を作らない (idle でも書かれない)', async () => {
+  const log = makeLogger()
+  const clock = { now: NOW }
+  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
+
+  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('同じ入力')] }, nextSpy().next)
+  goIdle(sentinel, session)
+  assert.equal(appends.length, 2)
+
+  // 2 回目は同じ文面なので抑制され、保留も作られない。
+  clock.now = NOW + MINUTE
+  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('同じ入力')] }, nextSpy().next)
+  goIdle(sentinel, session)
+
+  assert.equal(appends.length, 2)
+  someMessage(log.info, (m) => m.includes('同じ文面のブロック通知を抑えました'))
+})
+
+test('#27: 保留があるまま idle が来なければ書かれない (書き出しは idle が引き金)', async () => {
+  const log = makeLogger()
+  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
+
+  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('入力')] }, nextSpy().next)
+
+  // session/event を観測しても書かれない (turn の中に書かないことの確認)。
+  sentinel.onSessionEvent(session, { type: 'turn/end', time: NOW })
+  assert.equal(appends.length, 0)
+})
+
+test('#27: Session に append が無ければ保留を作らず、running でも idle でも何もしない', async () => {
+  const log = makeLogger()
+  const { session } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
+
+  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('入力')] }, nextSpy().next)
+
+  goIdle(sentinel, session)
+  sentinel.onAgentStatus('running', session)
+  assert.deepEqual(log.warn, [])
+  assert.deepEqual(log.info, ['ブロックしました: s1 (最終応答から 61 分, turn 1 step 1)。/unlock で次の送信を許可できます'])
+})
+
+test('#27: append が失敗しても落ちず、保留は残らない (idle の後始末)', async () => {
+  const log = makeLogger()
+  const { session: base } = sessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  let calls = 0
+  const session: SessionLike = {
+    ...base,
+    append() {
+      calls += 1
+      throw new Error('disk full')
+    },
+  }
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
+
+  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('入力')] }, nextSpy().next)
+  goIdle(sentinel, session)
+
+  someMessage(log.warn, (m) => m.includes('disk full'))
+  const afterFailure = calls
+
+  // 失敗した保留は残らないので、もう一度 idle が来ても再試行しない。
+  goIdle(sentinel, session)
+  assert.equal(calls, afterFailure)
+})
+
+test('#27: 文面は拒否した時点の言語と経過分で作る (idle で作り直さない)', async () => {
+  const log = makeLogger()
+  const clock = { now: NOW }
+  const { session, appends } = appendingSessionWith('en-session', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'en', () => clock.now)
+  const messages: StepMessage[] = [textMessage('draft')]
+
+  await sentinel.onPreStep({ ...payload(session), messages }, nextSpy().next)
+
+  // idle が来る前に時計が進んでも、文面の経過分は拒否した時点 (61 分) のまま。
+  clock.now = NOW + 5 * MINUTE
+  goIdle(sentinel, session)
+
+  const done = appendAt(appends, 1).data as CommandDoneData
+  assert.equal(done.text, buildBlockNotice({ idleMinutes: 61, messages }, 'en'))
+  assert.ok(done.text.startsWith('Send blocked ('), done.text)
+})
+
+test('#27: 同じセッションで idle を挟んで別の文面を送れば、それぞれ書かれる', async () => {
+  const log = makeLogger()
+  const clock = { now: NOW }
+  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
+
+  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('1 回目')] }, nextSpy().next)
+  goIdle(sentinel, session)
+  clock.now = NOW + MINUTE
+  await sentinel.onPreStep({ ...payload(session), messages: [textMessage('2 回目')] }, nextSpy().next)
+  goIdle(sentinel, session)
+
+  assert.equal(appends.length, 4)
+  assert.match((appendAt(appends, 1).data as CommandDoneData).text, /1 回目$/)
+  assert.match((appendAt(appends, 3).data as CommandDoneData).text, /2 回目$/)
+})
+
+test('#27: reject は idle を待たずその場で返る (拒否のタイミングは変えない)', async () => {
+  const log = makeLogger()
+  const clock = { now: NOW }
+  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
+  const pass = nextSpy()
+
+  const result = await sentinel.onPreStep({ ...payload(session), messages: [textMessage('入力')] }, pass.next)
+
+  // 拒否そのものは即座に返り、通知の書き出しを待たない。
+  assert.deepEqual(result, { kind: 'reject' })
+  assert.equal(pass.calls(), 0)
+  assert.equal(appends.length, 0)
 })
 
 // --- B13: サブエージェントの fork の子 (spec §2, #13) ---

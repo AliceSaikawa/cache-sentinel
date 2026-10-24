@@ -379,6 +379,7 @@ test('T26b (9): tick の実行中に再度 tick しても listSessions は 1 回
 interface OnCall {
   name: string
   options: unknown
+  listener?: (payload: unknown, next?: () => Promise<unknown>) => unknown
 }
 
 interface CommandCall {
@@ -438,8 +439,8 @@ function makeHostHarness(options: HostHarnessOptions = {}): HostHarness {
         ? { name: options.profileName }
         : undefined
     },
-    on(name: string, _listener: unknown, options?: unknown) {
-      onCalls.push({ name, options })
+    on(name: string, listener: unknown, options?: unknown) {
+      onCalls.push({ name, options, listener: listener as OnCall['listener'] })
       return () => true
     },
     commands: {
@@ -487,6 +488,9 @@ test('T26b (10): apply は pre-step(prepend)・session/event・2 コマンド・
     assert.equal(preStep.length, 1)
     assert.deepEqual(preStep[0]?.options, { prepend: true })
     assert.ok(host.onCalls.some((call) => call.name === 'session/event'))
+    // #27: 通知を turn の外 (idle 遷移) に書くための購読。
+    assert.equal(host.onCalls.filter((call) => call.name === 'agent/status').length, 1)
+
 
     assert.deepEqual(host.commandCalls.map((call) => call.name).sort(), ['sentinel', 'unlock'])
 
@@ -516,6 +520,127 @@ test('T26b (10): apply は pre-step(prepend)・session/event・2 コマンド・
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+// ---- (10a2) #27: agent/status の配線 ----
+
+test('#27: agent/status の購読は payload.agent.session を取り出し、idle で通知を turn の外に書く', async (t) => {
+  useLocaleEnv(t, 'ja_JP.UTF-8')
+  t.mock.method(console, 'log', () => {})
+  t.mock.method(console, 'warn', () => {})
+
+  const dir = await mkdtemp(join(tmpdir(), 'cache-sentinel-status-'))
+  const host = makeHostHarness()
+
+  // 失効したセッション (最終応答から 61 分)。append を記録する。
+  // apply は実時計 (Date.now) を使うので、イベント時刻も実時計から作る。
+  const appends: Array<{ type: string; data: unknown }> = []
+  const session = {
+    id: 's1',
+    snapshotEvents: () => [{ type: 'step/end', time: Date.now() - 61 * MINUTE }],
+    append: (type: string, data: unknown) => {
+      appends.push({ type, data })
+    },
+    ownEvents: () => [],
+  }
+
+  try {
+    await apply(host.ctx, { stateFile: join(dir, 'state.json'), checkIntervalSeconds: 30 })
+
+    const preStep = host.onCalls.find((call) => call.name === 'agent/pre-step')
+    const status = host.onCalls.find((call) => call.name === 'agent/status')
+    assert.ok(preStep)
+    assert.ok(status)
+    const drive = status.listener as unknown as (payload: unknown) => void
+
+    // 実機の順: ドライバの開始で running → そのステップの pre-step → idle。
+    drive({ agent: { session }, status: 'running' })
+
+    // 送信で始まるターンの最初のステップを拒否させる。
+    const decision = await (
+      preStep.listener as unknown as (
+        payload: unknown,
+        next: () => Promise<unknown>,
+      ) => Promise<unknown>
+    )({ agent: { session }, messages: [{ content: [{ type: 'text', text: '送信' }], source: { kind: 'user' } }], turn: 1, step: 1 }, async () => ({
+      kind: 'enter',
+    }))
+    assert.deepEqual(decision, { kind: 'reject' })
+
+    // 拒否した時点では書かない。
+    assert.equal(appends.length, 0)
+
+    drive({ agent: { session }, status: 'idle' })
+
+    // turn の外に書かれた (command/run → command/done)。
+    assert.deepEqual(
+      appends.map((entry) => entry.type),
+      ['command/run', 'command/done'],
+    )
+    const done = appends[1]?.data as { kind: string; text: string }
+    assert.equal(done.kind, 'error')
+    assert.match(done.text, /^送信を止めました\(最終応答から 61 分/)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+// ---- (10b) statusResponse ----
+
+test('T35a (2): statusResponse は sessionId なし・空なら 400、あれば lookup の JSON を返す', async () => {
+  const payload: StatusPayload = {
+    mode: 'block',
+    gate: true,
+    state: 'stale',
+    idleMinutes: 75,
+    thresholdMinutes: 60,
+    unlockExpiresAt: null,
+    dryRun: false,
+  }
+  const seen: string[] = []
+  const lookup = (sessionId: string): StatusPayload => {
+    seen.push(sessionId)
+    return payload
+  }
+
+  const missing = statusResponse(new Request(`http://x${STATUS_PATH}`), lookup)
+  assert.equal(missing.status, 400)
+
+  const empty = statusResponse(new Request(`http://x${STATUS_PATH}?sessionId=`), lookup)
+  assert.equal(empty.status, 400)
+
+  // 400 のときは lookup を呼ばない。
+  assert.deepEqual(seen, [])
+
+  const ok = statusResponse(new Request(`http://x${STATUS_PATH}?sessionId=s1`), lookup)
+  assert.equal(ok.status, 200)
+  assert.equal(ok.headers.get('content-type'), 'application/json; charset=utf-8')
+  assert.equal(ok.headers.get('cache-control'), 'no-store')
+  assert.deepEqual(seen, ['s1'])
+  assert.deepEqual(await ok.json(), payload)
+})
+
+// ---- (10c) runtime.status ----
+
+test('T35a (3): runtime.status は block で失効セッションを stale、archive では inactive と mode を返す', () => {
+  const events: readonly TimedEvent[] = [{ type: 'step/end', time: NOW - 61 * MINUTE }]
+  const session = makeSession('s1', events)
+
+  const blockHarness = makeHarness(parseTestConfig({ mode: 'block', idleMinutes: 60 }), stateWith())
+  const stale = blockHarness.runtime.status(session)
+  assert.equal(stale.mode, 'block')
+  assert.equal(stale.gate, true)
+  assert.equal(stale.state, 'stale')
+  assert.equal(stale.idleMinutes, 61)
+  assert.equal(stale.thresholdMinutes, 60)
+
+  const archiveHarness = makeHarness(parseTestConfig({ mode: 'archive', idleMinutes: 60 }), stateWith())
+  const inactive = archiveHarness.runtime.status(session)
+  assert.equal(inactive.mode, 'archive')
+  assert.equal(inactive.gate, false)
+  assert.equal(inactive.state, 'inactive')
+})
+
+// ---- (11) createDeps / isActiveSessionError ----
 
 // ---- (10a) /sentinel の input 記述子 (#36) ----
 

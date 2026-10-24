@@ -556,6 +556,136 @@ P1・P2 の挙動は 0.2.1-rc.2 でも同じ(`$PK` は 0.2.1-rc.2 の `node_modu
 
 ---
 
+# 通知を turn の外に書く (`agent/status` が idle に戻る遷移) (2026-10-23, DSH 0.2.1-rc.2) — #27
+
+結論: **ブロック通知を turn の外 (最上位の行) に置ける。** 実装点は `agent/status` の `idle` 遷移で、
+これは blocked の `turn/end` の**後**に必ず 1 回来る。`agent/status` は `session.append` の出版処理の外で
+emit されるので、そのリスナーからの `session.append` は再入ガードに掛からない。
+`$PK` = rc.2 の `node_modules/@deepseek-ai`。旧版(0.2.0-rc.2 / 0.2.1-rc.1)と比べたのは `dsh-agent` と
+`dsh-agent-loop` の 2 パッケージだけ(`~/AI/tmp/cs-issues/packs/` に `npm pack` で展開したもの)。
+`dsh-session`・`dsh-client-ui-conversation`・`dsh-client-ui-chat` の旧版とは比べていない(Q3・Q4 は rc.2 でだけ確認)。
+
+## Q1: `agent/status` の購読方法 — 確定
+- `$PK/dsh-agent/lib/types/runtime-types.d.ts:243-255` — `'agent/status'(payload: { agent: Agent; status: AgentStatus })`
+  (宣言は同 `:252-255`)、mode は `emit`(同 `:250`)。`AgentStatus` は `'idle' | 'running'` の 2 値(同 `:90`)。
+- **payload に `agent` が入っている**(同 `:253`)。したがって session を別途引く必要はなく、
+  `payload.agent.session` から直接取れる(`src/index.ts` の `AgentLike` がそのまま使える)。
+- `:248` のコメント: `status` は「その遷移の到達先」。`idle` は「driver が残っていない」。
+- 「transition のときだけ emit される」: `$PK/dsh-agent-loop/lib/index.js:794-799` の `setPhase()` が
+  `status !== previousStatus` のときだけ `emit` する(`:798`)。同じ status への再設定では発火しない。
+- 0.2.0-rc.2 / 0.2.1-rc.1 でも payload の型は同一(`deepseek-ai-dsh-agent-<版>/package/lib/types/runtime-types.d.ts:252-255`)。
+
+## Q2: `idle` への遷移が blocked の `turn/end` の後に来ること — 確定
+blocked の流れで発火するのはこの 1 か所だけ(`agent/turn-stopping` は reject 経路では通らない)。
+1. `$PK/dsh-agent-loop/lib/index.js:961-962` — `preStep` が `{kind:'reject'}` を返すと `turnEnds = {kind:'blocked'}` にして `return false`。
+2. 同 `:1027-1029` — `finally` が `session.append("turn/end", { turn, reason: turnEnds })` を実行。
+3. `:889` — `while (await this.turn())` が `false` で抜ける。
+4. `:891-899` — `kick()` の `finally` が `setPhase({kind:'idle', lastTurn: turn})` を呼ぶ。
+5. `:794-799` — `setPhase` が `agent/status` を emit(`running` → `idle`)。
+- すなわち **turn/end の外側**。`turn()` の `finally` は `:1027` で閉じ、`kick()` の `finally` はその後。
+- `agent/turn-stopping` は `:1001` にあり、`turnEnds && this.inbox.nextStep.length === 0` の break 経路でしか
+  呼ばれない。reject は `:962` で `return false` するため、blocked では**通らない**。
+- 版の比較(`dsh-agent-loop/lib/index.js`): 0.2.1-rc.1 は rc.2 と同一(diff なし)。0.2.0-rc.2 は pre-step の
+  waterfall の組み立て(rc.2 の `:909-920`)が 2 行短く、それより後ろが 2 行ずれる(reject 経路 `:958-960`、
+  `turn/end` の `finally` `:1024-1027`、`agent/turn-stopping` `:999`)。`setPhase`(`:794-799`)・`wakeDriver`(`:854-865`)・
+  `kick()`(`:887-900`)は 3 版で同じ行・同じ内容。どの版でも挙動は同じ。
+
+## Q3: そのリスナーから `session.append` して再入ガードに掛からないこと — 確定(実測)
+- ガードの実体: `$PK/dsh-session/lib/index.js:1568-1572` の `publicationEntry()` が
+  `attachments.get(this)?.appending` なら throw。`append()` は先頭でこれを呼ぶ(`:1527`)。
+  `commit()` が `:1581` で `appending = true` にし、`:1592` の**内側**で `session/event` リスナーを同期で呼び、
+  `:1595` の `finally` で戻す。
+- **`agent/status` はこの出版処理の外**。`setPhase` はドライバのフェーズ遷移(`kick()` の `finally`)で
+  emit するので、その時点で `appending` は立っていない。
+- 実測(`~/AI/tmp/cs-issues/rt27/reentry.mjs`、cordis `Context` + `SessionStore.enter` + 実物の `Session`):
+  - `session/event` のリスナーから `append` → `THROW: session append cannot reenter while another append is being published`。
+    しかも投げても握り潰される(`$PK/dsh-session/lib/index.js:1231-1241` の `invokeContainedSessionObservers` が
+    try/catch で `logger.warn`)。**§3.1 の「不可能」が実測で裏付いた。**
+  - 出版処理の外からの `append` → `OK`。ログは `turn/start, turn/end, command/run, command/done` の順に入った。
+- `running` への遷移も出版処理の外で emit される。受信箱への挿入は `session.append("agent/inbox/spliced")`
+  (`$PK/dsh-agent-loop/lib/index.js:204`)から戻った後で `agent/inbox/inserted` を emit し(`:205-206`)、
+  `send()` が `wakeDriver()`(`:854-865`)を呼ぶのも splice の後(`:803-804`)。
+  `agent/inbox/inserted` の実リスナーは 2 つだけで、どちらも同期的に `send`/`followup` を呼ばない:
+  - `$PK/dsh-goal-round-driver/lib/index.js:249-257` — state のフラグ立てのみ。
+  - `$PK/dsh-subagent/lib/index.js:1856-1863` → `wake()`(`:1915-1919`)は Promise を resolve するだけ(append を伴わない)。
+  結論(再入しない)は変わらない。それでも cache-sentinel 側は**失敗しても warn に留めて落ちない**ようにしてある(`src/block.ts`)。
+
+## Q4: UI 側が turn の外の行を最上位に描くこと — コードで追認(実機は Q5)
+- `$PK/dsh-client-ui-conversation/lib/client.js:2178` — payload に `turn` が無いイベントは `currentTurn` に帰属。
+  同 `:2191-2194` — `turn/end` で `currentTurn = undefined` にリセット。
+- `command/run` / `command/done` は payload に `turn` を持たない(`$PK/dsh-commands/lib/types/types.d.ts:101-118`)。
+  → `turn/end` の**後**に append すれば `kind:'session'` になり、`$PK/dsh-client-ui-chat/lib/client.js:11645-11653` が
+  turn を持たないノードを最上位に置く。**この経路はコードで確認した。実機での結果は Q5 に書く。**
+- `$PK/dsh-client-ui-chat/lib/client.js:4159` の `alwaysOpen` に `blocked` は含まれないため、
+  turn の中で書くと折りたたまれる(現状の不具合)。
+
+## Q5: 実機での確認 (2026-10-23, DSH 0.2.1-rc.2 web プロファイル) — 確定(実測)
+隔離した `HOME` / `DSH_HOME`(`~/AI/tmp/cs-issues/rt27/`)で web プロファイルを port 5292 で起動し、
+`pnpm pack` した本ブランチの cache-sentinel を入れ、`idleMinutes: 1` で失効させて送信した。
+
+### Q5-1: セッションログ上の順序 — 通知は turn の外
+`session.v4.jsonl.zstd` を展開したイベント列(抜粋、`seq` は保存順):
+
+```
+  4 turn/start  turn=1
+  ...
+ 16 step/end    turn=1
+ 17 turn/end    turn=1
+ 20 turn/start  turn=2
+ 22 turn/end    turn=2      ← 拒否。step を持たない turn
+ 23 command/run  turn=(無し)  commandId=cache-sentinel-session-….…-1  name=cache-sentinel
+ 24 command/done turn=(無し)  kind=error  text="送信を止めました(最終応答から 1 分。…)\n破棄された入力:\nhello two please block me"
+```
+
+- 通知の `command/run` / `command/done` は **turn 2 の `turn/end`(seq 22)より後**の seq 23・24 にある。
+- 両イベントは payload に `turn` を**持たない**(`turn=(無し)`)。
+  → Q4 のとおり `currentTurn` に帰属せず `kind:'session'` の最上位ノードになる。
+- 拒否された turn 2 は `turn/start`(seq 20)の直後に `step` を 1 つも持たず `turn/end`(seq 22)しており、
+  `agent/pre-step` の reject が step を作る前に効いていることと整合する。
+
+### Q5-2: DOM 上の見え方 — 折りたたみを開かずに読める
+Playwright(1280x900、`locale: ja-JP`)で、失効後の送信から 9 秒後の状態:
+
+- `送信を止めました` を含む要素: 1 件。`isVisible()` = **true**(クリック・展開操作なし)。
+- 破棄された入力 `hello two please block me`: 1 件。`isVisible()` = **true**。
+- 祖先をたどると `…_text_…` → `…_root_…` → `…_5OnbHa_root` → `EvIC1a_callRow` → `EvIC1a_flowItem`。
+  turn の折りたたみ(展開トグル)の内側ではなく、最上位の flow の項目として置かれている。
+- 画面では、完了した turn の下に `>. cache-sentinel · 送信を止めました(最終応答から 1 分。…)。/unlock …`
+  の行がそのまま見えており、折りたたみを開く操作は不要だった(スクリーンショット `shot-rt27-blocked.png`)。
+
+**結論**: 実機で「送信直後に折りたたみの奥に隠れず最上位の行として読める」ことを確認した。
+
+## Q6: `running` は保留を作る pre-step より前に来る — 確定(コード)
+- `$PK/dsh-agent-loop/lib/index.js:854-865` — `wakeDriver()` が idle のときだけ `setPhase({kind:'running', …})`(`:861-867`)
+  を呼んでから `kick()` を始める。`agent/status`(`running`)はここで同期に emit される(`:794-799`)。
+- pre-step(`agent/pre-step` の waterfall、`:909`)は `kick()` → `turn()`(`:938`)の中でしか呼ばれない。
+  したがって、あるドライバで拒否して作った保留より前に、そのドライバの `running` は来終わっている。
+- reject の後は `turn()` が `false` を返してドライバが終わり、`kick()` の `finally` で `idle` になる(Q2)。
+  通常の流れで保留が残ったまま次の `running` が来ることはない。来るのは idle が届かなかった場合
+  (scope の dispatch フィルタが破棄済みの agent を落とすなど。**推測・未確認**)で、その保留は前のターンのものなので捨てる。
+- 0.2.0-rc.2 / 0.2.1-rc.1 も `wakeDriver`・`setPhase`・`kick()` は同じ行(Q2 の版の比較)。
+
+## 未確認・推測
+- (推測)他のプラグインの `agent/status` の idle リスナーが cache-sentinel より先に走り、その中で同期に `followup` して
+  次のドライバを始めると、`running` が入れ子で emit される。このとき cache-sentinel は `running` で保留を捨てるので、
+  通知は次の turn の中には入らないが、出ないまま info ログだけが残る。rc.2 で idle を購読する
+  `dsh-goal-round-driver`(`$PK/dsh-goal-round-driver/lib/index.js:223`)は、ラウンドを始める前に `await` を挟む
+  (`drive()`、同 `:108-133`)ので、この形にはならないと読んだ。他の購読元(`dsh-acp`・`dsh-api-session-controller`・
+  `dsh-compaction-basic`・`dsh-experimental-agent-team`・`dsh-sdk-jsonrpc-server`)は調べていない。
+- 0.2.0-rc.2・0.2.1-rc.1 の実機。`dsh-session`・UI 側の旧版のコード。
+
+## 確認の再現方法
+1. `node --experimental-strip-types` は不要。WT で `pnpm pack` して tgz を作る。
+2. 隔離環境: `HOME=~/AI/tmp/cs-issues/rt27/home`、`DSH_HOME=~/AI/tmp/cs-issues/rt27/dsh-home`。
+   web プロファイルの `cordis.patch.yml` に `agent-default-model`(mock プロバイダ)・`llm-pi-ai`(baseURL を
+   ローカルのモックへ)・`cache-sentinel`(`idleMinutes: 1`)を書く。
+3. モック LLM(`mock-llm.mjs`、port 5392)を起動し、`dsh web --port 5292` で起動、Playwright で送信する。
+   1 通目で応答させ、70 秒待って失効させてから 2 通目を送ると拒否される。
+4. 確認は (a) セッションログの `seq` 順と `turn` の有無、(b) `送信を止めました` の `isVisible()` と祖先、
+   の 2 点で行う。使ったスクリプトは `~/AI/tmp/cs-issues/rt27/{verify.mjs,lib.mjs}`。
+
+---
+
 # サブエージェントの fork の子の判定材料の調査 (2026-10-23, DSH 0.2.1-rc.2) — #13
 
 結論: 子セッションは `session.header` から `origin`('subagent')・`createdAt`・`isSeeded` を読める。
