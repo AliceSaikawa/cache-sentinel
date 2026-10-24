@@ -109,13 +109,22 @@
 | gate かつ state = unlocked | 情報:「次の送信を許可中(キャッシュなしの料金になります)。あと {M} 分」 |
 | それ以外 | 何も出さない |
 - 文面の言語は §F に従う(表に書く例は日本語)。
+- バナーの文言は、他プラグインの打鍵方式(1 回目の Enter を改行にするか等)に依存する案内を持たない。併用時の見え方は README に書く(#28)。
 - 取得は表示中のセッションについて、表示開始時・30 秒ごと・画面が前面に戻ったとき・ボタン操作の後。失敗したら何も出さない(送信の邪魔をしない)。
 - ボタンは `/unlock` コマンドを実行し、結果の文面は通常のコマンド結果として会話に出る。
+- ボタンの実行が失敗したときは、警告の文面の下に失敗の文面を出す(#26。状態の取得と違い、利用者の操作への応答なので黙らない)。
+  - 失敗とみなすもの: `remote.commands.execute` の `{ ok: false, error }`(`error.code` と `error.message` を添える)、
+    `{ ok: true, value: undefined }`(コマンドが見つからない = Host 側が動いていない)、例外、想定外の戻り値。
+  - `/unlock` 自体の結果(許可した・まだ有効・応答なし・モードが無効)は会話のコマンド結果に出るので、バナーには出さない。
+  - 判定は純粋関数 `unlockFailure(result, locale)`(`src/client/run-unlock.ts`)。
+  - 失敗の文面は、次にボタンを押すか、警告が消える(許可中になる等)か、別のセッションを表示するまで出す。
 
 ### E3. 公式 UI(cache-sentinel のクライアント半分)
 - `package.json` の `exports['./client']` = `lib/client.js`、`dsh.client = { platform: 'web', immediately: false, inject: ['@deepseek-ai/dsh-client-ui-conversation'] }`。
 - `ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({ name, id: 'cache-sentinel', order: 5, inject: (sessionId) => ({ sessionId, locale, unlock }) }, Banner))`。
   `unlock` は `ctx.remote.commands.execute(sessionId, '/unlock', [])`。`locale` は `navigator.languages` から決める(§F)。
+- クライアントの `inject` は `['slots', 'remote', 'remote.commands']`。`remote.commands` は `remote` とは別のサービスキーで、
+  宣言しないと使った時点で例外になる(#26、根拠は spike.md「クライアント側 `remote.commands` の inject」)。
 - 取得 URL は `new URL('api/cache-sentinel.status?sessionId=…', document.baseURI)`。
 - ビルド: esbuild で CJS(browser)にし、`window.__ModuleLoader__.load({ id, factory })` で包む(dsh-webui-m3e と同じ)。React は外部(シェルが提供)。
   React の型のために依存を足さず、使う API だけの最小の型宣言を置く。
@@ -156,5 +165,6 @@
   出して捨て、idle が来ないまま次の `running` が来たら保留を捨てて info ログを残す。
 - E1: status が仕様どおりの JSON を返す。未認証は拒否される。sessionId なしは 400。
 - E2: 公式 UI で、失効したセッションを開くと入力欄の上に警告とボタンが出る。ボタンで許可され、表示が「許可中」に変わる。
+  ボタンの実行が失敗したら、警告の下に失敗の文面が出る。
 - E3: m3e で同じ表示が出る。cache-sentinel が無い DSH では何も出ない。
 - F1: 通知・バナー・コマンド出力・設定エラーが 3 言語それぞれでその言語になり、未対応の言語では英語になる。

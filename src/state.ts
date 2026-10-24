@@ -1,9 +1,9 @@
 /**
  * 永続状態 (state.json, version 2) の読み書き・破損復旧 (§C)。
- * 純粋関数 (parseState / tempPathFor) と副作用 (loadState / saveState) を分ける。
+ * 純粋関数 (parseState / tempPathFor) と副作用 (loadState / saveState / stateExists) を分ける。
  * ファイル操作は node:fs/promises と node:path のみを使う。
  */
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 import { isMode, type Mode } from './modes.ts'
@@ -114,6 +114,20 @@ export async function loadState(filePath: string): Promise<State> {
     return emptyState()
   }
   return parseState(text)
+}
+
+/**
+ * state.json が存在するか (stat で確かめる)。移行の判断(#9)に使う: 「プロファイル別のファイルがあるか」は内容ではなく存在で決める。
+ * 無いと確かめられたとき(ENOENT)だけ false。それ以外のエラー(EACCES・ENOTDIR など)は true を返し、
+ * あるかもしれないファイルを移行で上書きしないようにする。
+ */
+export async function stateExists(filePath: string): Promise<boolean> {
+  try {
+    await stat(filePath)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT'
+  }
 }
 
 /**

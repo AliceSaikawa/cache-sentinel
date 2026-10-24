@@ -12,7 +12,7 @@
 import type { Config } from './config.ts'
 import { classifyStep, decideGate, type StepKind } from './gate.ts'
 import type { Locale } from './i18n.ts'
-import { LastResponseTracker, type TimedEvent } from './last-response.ts'
+import { LastResponseTracker, type SessionView, type TimedEvent } from './last-response.ts'
 import type { Logger } from './log.ts'
 import {
   buildBlockNotice,
@@ -27,10 +27,28 @@ import {
 import { computeStatus, type StatusPayload } from './status.ts'
 import { decideUnlock, UnlockStore, unlockMessage } from './unlock.ts'
 
+/** Session の header のうち使う部分(dsh-session の SessionHeader)。 */
+export interface SessionHeaderLike {
+  /** サブエージェントの子として作られたセッションか(spec §2 の例外の判定)。 */
+  readonly origin?: string
+  /** セッションの作成時刻(epoch ms)。 */
+  readonly createdAt?: number
+  /** fork で引き継いだ prefix を持つか。 */
+  readonly isSeeded?: boolean
+}
+
 /** Session のうち使う部分(dsh-session の Session)。 */
 export interface SessionLike {
   readonly id: string
+  /** 引き継いだ部分も含むイベント列。 */
   snapshotEvents(): readonly TimedEvent[]
+  /**
+   * このセッション自身が書いたイベント列(引き継いだ prefix を除く。dsh-session の `ownEvents()`)。
+   * サブエージェントの fork の子だけが使う。無ければ `snapshotEvents()` で代用する。
+   */
+  ownEvents?(): readonly TimedEvent[]
+  /** 作成メタデータ(dsh-session の `session.header`)。無ければ従来どおりに判定する。 */
+  readonly header?: SessionHeaderLike
   /** dsh-session の Session.append。ブロック通知(command/run と command/done)の追加に使う。 */
   append?(type: string, data: unknown): unknown
 }
@@ -89,6 +107,19 @@ export interface Sentinel {
 export type BlockSettings = Pick<Config, 'idleMinutes' | 'unlockTtlMinutes' | 'dryRun'>
 
 /**
+ * DSH の Session を判定用の見え方に落とす(spec §2)。DSH 依存はここに閉じる。
+ * サブエージェントの fork の子(`origin === 'subagent'` かつ `isSeeded`)だけ、引き継いだ prefix を除いた
+ * `ownEvents()` と作成時刻を渡す。それ以外(fork でないサブエージェントを含む)は従来どおり全イベントから探す。
+ */
+function sessionViewOf(session: SessionLike): SessionView {
+  if (session.header?.origin !== 'subagent' || session.header.isSeeded !== true) return {}
+  return {
+    ownEvents: session.ownEvents?.() ?? session.snapshotEvents(),
+    createdAt: session.header.createdAt,
+  }
+}
+
+/**
  * 設定・ロガー・表示言語・時計・有効判定から入力禁止の部品を作る。
  * 最終応答時刻は、そのとき手元にある Session のイベント列から初回だけ読み、以後は session/event で更新する。
  * 会話に書き込むブロック通知は `locale` (プロセスで 1 回決める。spec-ui v0.5 §F) で作る。
@@ -102,7 +133,11 @@ export function createSentinel(
 ): Sentinel {
   // tracker の load は、いま判定しているセッションのオブジェクトから読む(sessions サービスに依存しない)。
   let loading: SessionLike | undefined
-  const tracker = new LastResponseTracker((id) => (loading?.id === id ? loading.snapshotEvents() : undefined))
+  const tracker = new LastResponseTracker((id) => {
+    if (loading?.id !== id) return undefined
+    const session = loading
+    return { events: session.snapshotEvents(), view: sessionViewOf(session) }
+  })
   const unlocks = new UnlockStore()
   const dedupe = new NoticeDedupe(NOTICE_DEDUPE_INTERVAL_MS)
   const pending = new PendingNotices()

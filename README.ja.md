@@ -13,7 +13,7 @@ DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古い�
 - **入力禁止（`block`）**：セッションは開いて読めるまま、あなたの送信だけを止めます。エージェントが進めている作業（ツールの実行・ジョブ・サブエージェント・ゴール・リマインダー）は止めません。続けて送りたいときは、入力欄の上のボタンか `/unlock` コマンドで次の 1 回だけを許可できます。
 - **自動アーカイブ（`archive`）**：しばらく更新のないセッションを自動でアーカイブし、サイドバーから隠して開けないようにします。
 
-両方を組み合わせる `both` モード（60 分で入力禁止、24 時間でアーカイブ）や、一時的に機能を止める `off` モードへ、チャットの `/sentinel` コマンドからいつでも切り替えられます。
+両方を組み合わせる `both` モード（60 分で入力禁止、24 時間でアーカイブ）や、一時的に機能を止める `off` モードへ、チャットの `/sentinel` コマンドからいつでも切り替えられます（公式 Web UI では、引数つきの `/sentinel` は現在入力欄から実行できません。[#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)）。
 
 ## 導入
 
@@ -65,8 +65,11 @@ DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古い�
 チャットの入力欄から、現在の状態の確認とモードの切り替えができます。
 
 - `/sentinel`：現在の実効モードとその出どころ（`/sentinel` で設定 / YAML の設定）、しきい値、このセッションの最終応答からの経過分、`dryRun` の状態を表示します。
-- `/sentinel block` | `archive` | `both` | `off`：実効モードを切り替えます。`$DSH_HOME/cache-sentinel/state.json` に保存され、DSH 再起動後も維持されます（YAML の `mode` より優先）。
+- `/sentinel block` | `archive` | `both` | `off`：実効モードを切り替えます。`$DSH_HOME/cache-sentinel/profiles/<プロファイル名>/state.json`（プロファイルごと）に保存され、DSH 再起動後も維持されます（YAML の `mode` より優先）。
 - `/sentinel default`：`/sentinel` で保存したモードを消去し、YAML の `mode` 設定に戻します。
+- 注意：公式 Web UI では、引数つきの `/sentinel`（`block`・`archive`・`both`・`off`・`default`）は現在入力欄から実行できず、普通のメッセージとして送られます（[#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)）。引数なしの `/sentinel` と `/unlock` は使えます。修正されるまでは、モードは YAML の `mode` で切り替えてください。
+
+引数は任意です。入力欄に `/sentinel ` と打つと、引数を入力するまで候補がプレースホルダとして表示されます。
 
 ### `/unlock` コマンド
 
@@ -85,7 +88,10 @@ DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古い�
   - **公式 Web UI**：クライアントプラグイン（`lib/client.js`）が入力欄の上（`conversation.input.dock`）に状態バナーを表示します。
     - 失効中：「キャッシュ切れ(最終応答から N 分)。このまま送ると止められます。」と「次の 1 回を許可(/unlock)」ボタン
     - 許可中：「次の送信を許可中(キャッシュなしの料金になります)。あと M 分」
+    - ボタンで `/unlock` を実行できなかったときは、警告の下に理由が出ます。そのときは入力欄から `/unlock` を送ってください。
   - **M3E（`dsh-webui-m3e`）**：ブロック時の会話行は表示されますが、M3E は他プラグインのクライアントバンドルを読み込まないため、送信前のバナー表示には M3E 側の対応が必要です。
+- **他のプラグインとの併用（rdsh-ui-comfort など）**：
+  - 1 回目の Enter を改行に変えるプラグイン（`rdsh-ui-comfort` など）を併用していると、1 回目の Enter では送信されず改行が入るだけです。これはプラグインの打鍵の扱いによるもので、cache-sentinel は入力をブロックしていません。続けて（rdsh-ui-comfort の既定では 1.5 秒以内に）もう一度 Enter を押すと送信され、そのとき失効中ならサーバー側で止められて会話にブロック通知が出ます。間を置いてから押した Enter は、また改行が入るだけです。
 - **状態の取得 API**：
   - `GET /api/cache-sentinel.status?sessionId=<id>`（Connection の認証つき）でセッションの状態 JSON を返します。
 
@@ -105,7 +111,7 @@ DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古い�
     archiveExisting: false    # 初回有効化より前に止まっていたセッションもアーカイブ対象にする
     maxPerCycle: 20           # 1 サイクルあたりの最大アーカイブ件数
     dryRun: false             # true のときブロックもアーカイブも行わずログのみ出力
-    # stateFile: /path/to/state.json # 永続状態ファイルのパス(既定: $DSH_HOME/cache-sentinel/state.json)
+    # stateFile: /path/to/state.json # 永続状態ファイルのパス(既定: $DSH_HOME/cache-sentinel/profiles/<プロファイル名>/state.json)
 ```
 
 - `cordis.patch.yml` の設定変更は DSH の再起動なしで反映されます（プラグインが新しい設定で再適用され、メモリ上の `/unlock` の許可は消えます）。
@@ -121,7 +127,7 @@ DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古い�
   - ユーザーの送信を含まずに始まるターン（バックグラウンドジョブの完了通知、サブエージェントからのメッセージと完了通知、ゴールの自動継続、リマインダー、webhook。webhook は DSH 0.2.0-rc.2 のみ）。
 - 失効したステップをこの理由で通したときは、その旨をログに出します（[ログの見方](#ログの見方)）。
 - ユーザーの送信が他の入力（待っていたジョブの完了通知など）と同じステップに入った場合は、ステップごと止め、その入力も破棄されます。
-- 経過時間はセッションの最後の `step/end` イベント時刻（フォーク元から引き継いだ履歴を含む）から計算します。まだモデル応答がない新規セッションや、経過時間が `idleMinutes` 分ちょうど以内の場合はそのまま通します。
+- 経過時間はセッションの最後の `step/end` イベント時刻（フォーク元から引き継いだ履歴を含む）から計算します。ただしサブエージェントが fork した子セッションでは、引き継いだ履歴の代わりに子の作成時刻と子自身の `step/end` の新しい方を使います（fork は親の実行中に起きるため）。まだモデル応答がない新規セッションや、経過時間が `idleMinutes` 分ちょうど以内の場合はそのまま通します。
 - ステップを拒否したときは API リクエストが発生せず、料金はかかりません。**そのステップに入る予定だった送信メッセージは破棄される**ため、解除後に再入力してください（破棄されたテキストは会話内のブロック通知に表示されます）。
 
 ### アーカイブ（`archive` / `both` モード）
@@ -134,6 +140,7 @@ DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古い�
 
 ## 制限
 
+- **複数プロファイルの同時利用**：`state.json` はプロファイルごと（`$DSH_HOME/cache-sentinel/profiles/<プロファイル名>/state.json`）に分かれるため、モード・`baselineAt`・解除の記録は互いを上書きしません。以前の版から更新すると、各プロファイルの最初の起動時に従来の `$DSH_HOME/cache-sentinel/state.json` の内容を引き継ぎます（従来のファイルは消さず、以後は読みません）。プロファイル名が取れない環境では従来のファイルを使います。ただしアーカイブ状態は DSH の共有ファイル `$DSH_HOME/storages/workspace.json` にあり、プラグインからは分離できません。DSH は起動時に 1 回読んで以後再読込せず、書き込みでファイル全体を置き換えるため、2 つのプロファイルを同時に動かすと、一方のアーカイブ / アンアーカイブ / ピンの変更がもう一方の書き込みで失われることがあります。**`archive` / `both` を使う場合は、どれか 1 つのプロファイルでのみ有効にしてください。**
 - M3E では他プラグインのクライアントバンドルを読み込まないため、送信前のバナー表示には M3E 側の対応が必要です（ブロックしたときの会話内の通知は Host 側のみで表示されます）。
 - サブエージェントのセッションでは GUI から `/unlock` を実行できません。親エージェントからのメッセージは止めませんが、GUI からサブエージェントに直接送ったメッセージは、サブエージェント側でキャッシュが切れていれば止まります。
 - ユーザーの操作によるものでも、通常の送信ではない入力は止めません。
@@ -207,10 +214,12 @@ node scripts/dsh-compat.ts /var/tmp/dsh-compat 0.2.1-rc.1 0.2.1-rc.2
 
 ## 対応バージョン・動作環境
 
-- **DeepSeek Harness（DSH）**：**0.2.0-rc.2 〜 0.2.1-rc.1**（0.2.1-alpha.1〜alpha.5 を含む）
-  - **0.2.0-rc.2**：実機で確認済み。
-  - **0.2.1-alpha.1〜alpha.5・0.2.1-rc.1**：cache-sentinel が使う API の型定義と実装を 0.2.0-rc.2 と比べて確認（2026-10-17）。実機は未確認。0.2.1-rc.1 では、ブラウザ以外の接続元からの状態取得 API が 403 になる（その接続元では送信前バナーが出ないだけ）。
-  - 根拠は [docs/spike.md](docs/spike.md) を参照。新しい版が出たときの確認は [scripts/dsh-compat.ts](scripts/dsh-compat.ts) で行えます。
+- **DeepSeek Harness（DSH）**：**0.2.0-rc.2 〜 0.2.1-rc.2**（0.2.1-alpha.1〜alpha.5 を含む）
+  - 対応範囲は `package.json` の `peerDependencies`（`"@deepseek-ai/dsh": ">=0.2.0-rc.2 <=0.2.1-rc.2"`）で宣言しています。DSH はプラグインの追加時とプロファイル起動時にこの範囲を検査します。範囲外の DSH ではプラグインが拒否されて読み込まれません（DSH 自体の起動は続き、理由が表示されます）。どうしても動かす場合は、プロファイルの `compatibility.json` にプラグインの版と DSH の版の組を完全一致で免除します（`dsh plugin --profile <プロファイル> allow-version cache-sentinel@<版> --dsh-version <DSH の版> --accept-risk`）。**0.2.1 の正式版は範囲外**です（2026-10-23 時点で未リリースのため）。
+  - **0.2.0-rc.2・0.2.1-rc.1**：npm で配布されている DSH の実機で確認（`web` プロファイル、2026-10-18）。確認した機能は、入力禁止・`/unlock`・`/sentinel`（引数なしは入力欄から。引数つきは RPC の `commands/execute` からのみ。[#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)）・アーカイブのサイクル・会話内のブロック通知・入力欄の上のバナー。2 つの版で結果は同じでした。使った cache-sentinel は main の `86a77f6` で、バナーのボタンの修正（[#34](https://github.com/AliceSaikawa/cache-sentinel/pull/34)）より前のため、ボタンは動きませんでした。修正後のボタンは 0.2.0-rc.2 でだけ確認しています。詳細は [docs/dsh-version-check.md](docs/dsh-version-check.md) を参照。
+  - **0.2.1-rc.2**：実機は未確認。cache-sentinel が使う API の型定義と実装を 0.2.1-rc.1 と比べて確認（2026-10-23）。違いは `dsh-client-modules` のビルド識別子と、`dsh-base`・`dsh-web-app` のバンドルへの行の追加だけでした。根拠は [docs/spike.md](docs/spike.md) を参照。
+  - **0.2.1-alpha.1〜alpha.5**：実機は未確認。cache-sentinel が使う API の型定義と実装を 0.2.0-rc.2 と比べて確認（2026-10-17）。根拠は [docs/spike.md](docs/spike.md) を参照。
+  - 新しい版が出たときの確認は [scripts/dsh-compat.ts](scripts/dsh-compat.ts) で行えます。
 - **DSH のプロファイル**：`web` と `desktop`。`dsh.profile.bundles` に `@deepseek-ai/dsh-web-app` を含むプロファイルが対象です（`web` のテンプレートから作ったプロファイルも含みます）。cache-sentinel が使う `workspaceRegistry` と `connection` のサービスは、このバンドルにしかありません。
   - `headless`・`acp` などほかのプロファイルでは、cache-sentinel は起動しません。サービスを待ったままになるため、入力禁止・アーカイブ・`/sentinel`・`/unlock` のいずれも使えません。エラーは出ず、`[cache-sentinel]` の起動ログも出ません。
   - `desktop` は `web` と同じバンドルを使いますが、実機では未確認です。npm 版の `dsh` CLI は `desktop` プロファイルのプラグイン管理を受け付けないため、Desktop アプリと一緒に入る `dsh` コマンドで追加してください。
