@@ -17,6 +17,7 @@ import {
   NOTICE_DEDUPE_INTERVAL_MS,
   noticeDedupeKey,
   type NoticeMessage,
+  type NoticeSource,
 } from './notice.ts'
 import { computeStatus, type StatusPayload } from './status.ts'
 import { decideUnlock, UnlockStore, unlockMessage } from './unlock.ts'
@@ -52,13 +53,17 @@ export interface AgentLike {
   readonly session: SessionLike
 }
 
-/** `agent/pre-step` の messages の 1 件のうち使う部分(dsh-llm の UserMessage)。 */
-export interface StepMessage extends NoticeMessage {
+/**
+ * `agent/pre-step` の messages の 1 件のうち使う部分(dsh-llm の UserMessage)。
+ * `source` は DSH では必須の `MessageSource`(spike.md「止める対象の判定材料」「入力の出どころの
+ * form / summary の調査」)。通知の文面に使う `summary` もここから読む。
+ */
+export type StepMessage = NoticeMessage & {
   /**
-   * 入力の出どころ。ユーザーの送信は `'user'`(spike.md「止める対象の判定材料」)。
+   * 入力の出どころ。ユーザーの送信は `'user'`。
    * DSH の型では必須だが、欠けたメッセージ 1 件でステップ全体が判定の例外(fail-open)にならないよう任意として読む。
    */
-  readonly source?: { readonly kind: string }
+  readonly source?: NoticeSource & { readonly kind: string }
 }
 
 /** `agent/pre-step` の payload のうち使う部分。 */

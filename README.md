@@ -82,6 +82,7 @@ The argument is optional. After you type `/sentinel ` in the input box, the choi
 - **Display language**: Text follows your environment. The Host resolves it from `LC_ALL`, `LC_MESSAGES`, `LANG`, and the system locale, in that order; the official Web UI resolves it from the browser language (`navigator.languages`). English, Japanese, and Simplified Chinese are supported, and unsupported languages fall back to English. Log output (lines prefixed with `[cache-sentinel]`) stays in Japanese.
 - **When a send is blocked (both the official Web UI and M3E)**:
   - The conversation displays "Send blocked (N minutes since the last response, as the cache has likely expired)." and "You can allow the next single send with /unlock.", along with the discarded input text (up to 2000 characters per message), as a command result line.
+  - Other input that entered the same step as your send and was discarded with it (job completion notices, plugin reminders, and so on) is shown not as its model-facing text but as the one-line description its producer attached (`source.summary`), or as a single "(input from kind)" line.
   - Sending the same input again and again is still blocked every time, but to keep the notices from piling up only one is shown per 10 minutes (a different input, or the same one after a send has gone through, is shown right away).
 - **Pre-send banner display**:
   - **Official Web UI**: The client plugin (`lib/client.js`) displays a status banner above the input box (`conversation.input.dock`).

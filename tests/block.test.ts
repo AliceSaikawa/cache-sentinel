@@ -18,6 +18,11 @@ import { buildBlockNotice, NOTICE_TEXT_LIMIT } from '../src/notice.ts'
 const MINUTE = 60_000
 const NOW = 1_700_000_000_000
 
+/** answer-guard のリマインダーのモデル向け本文と、表示用の summary (実物は spike.md「N2」)。 */
+const REMINDER_TEXT =
+  'Your previous assistant message contained no visible text: it was about to end the turn with only reasoning, so the reader was shown no answer. Do not repeat tool calls or redo the work. Restate the answer you already reached as ordinary text, outside any reasoning block, now.'
+const REMINDER_SUMMARY = '本文なしの応答を検知したため、再出力を要求しました'
+
 const CONFIG: BlockSettings = { idleMinutes: 60, unlockTtlMinutes: 10, dryRun: false }
 
 /** 入力禁止が無効なモードで `/unlock` のときに呼び出し側が渡す文面(src/mode.ts の unlockInactiveMessage 相当)。 */
@@ -43,6 +48,13 @@ function agentOf(session: SessionLike): AgentLike {
 /** テキスト 1 件だけの入力。既定はユーザーの送信。 */
 function textMessage(text: string, kind = 'user'): StepMessage {
   return { content: [{ type: 'text', text }], source: { kind } }
+}
+
+/** answer-guard のリマインダー相当の入力 (#29。rdsh-answer-guard の createReminder と同じ形)。 */
+function noticeMessage(text: string, summary: string, kind = 'rdsh-answer-guard'): StepMessage {
+  // DSH の MessageSource は form なども持つ。境界の型に無いフィールドが混ざっていても読めることを兼ねる。
+  const source = { kind, form: 'notice', summary }
+  return { content: [{ type: 'text', text }], source }
 }
 
 /** ユーザーの送信で始まるターンの最初のステップ(止める対象)。 */
@@ -838,14 +850,67 @@ test('B11: 最初のステップで入力が 0 件でも通す', async () => {
 })
 
 test('B12: 最初のステップにユーザーの送信と他の入力が混ざっていれば止め、両方を破棄された入力として表示する', async () => {
-  const messages = [textMessage('job done', 'tool-jobs'), textMessage('続けて')]
+  // 他の入力は summary を持つので summary を載せる(#29。モデル向けの本文は出さない)。
+  const messages = [noticeMessage(REMINDER_TEXT, REMINDER_SUMMARY), textMessage('続けて')]
   const { result, pass, appends } = await preStepOnExpired({ step: 1, messages })
 
   assert.deepEqual(result, { kind: 'reject' })
   assert.equal(pass.calls(), 0)
   const done = appendAt(appends, 1).data as CommandDoneData
   assert.equal(done.text, buildBlockNotice({ idleMinutes: 61, messages }, 'ja'))
-  assert.match(done.text, /job done\n\n続けて$/)
+  assert.match(done.text, /本文なしの応答を検知したため、再出力を要求しました\n\n続けて$/)
+  assert.ok(!done.text.includes(REMINDER_TEXT), done.text)
+})
+
+// --- #29: 破棄された入力の出どころごとの文面 (spec-ui §D) ---
+
+test('D5: answer-guard のリマインダーは summary を載せ、モデル向けの本文を出さない', async () => {
+  const messages = [textMessage('続けて'), noticeMessage(REMINDER_TEXT, REMINDER_SUMMARY)]
+  const { result, pass, appends } = await preStepOnExpired({ step: 1, messages })
+
+  assert.deepEqual(result, { kind: 'reject' })
+  assert.equal(pass.calls(), 0)
+  const done = appendAt(appends, 1).data as CommandDoneData
+  assert.equal(done.text, buildBlockNotice({ idleMinutes: 61, messages }, 'ja'))
+  assert.match(done.text, /破棄された入力:\n続けて\n\n本文なしの応答を検知したため、再出力を要求しました$/)
+  assert.ok(!done.text.includes('Your previous assistant message'), done.text)
+})
+
+test('D5: summary が無い他の入力は出どころ名だけを 1 行にする', async () => {
+  const messages = [textMessage('続けて'), textMessage('自動の入力', 'tool-jobs')]
+  const { result, pass, appends } = await preStepOnExpired({ step: 1, messages })
+
+  assert.deepEqual(result, { kind: 'reject' })
+  assert.equal(pass.calls(), 0)
+  const done = appendAt(appends, 1).data as CommandDoneData
+  assert.equal(done.text, buildBlockNotice({ idleMinutes: 61, messages }, 'ja'))
+  assert.match(done.text, /破棄された入力:\n続けて\n\n\(tool-jobs からの入力\)$/)
+  assert.ok(!done.text.includes('自動の入力'), done.text)
+})
+
+test('#29: 出どころごとの文面は、前回と同じなら 10 分に 1 件に抑える', async () => {
+  const clock = { now: NOW }
+  const { session, appends } = expiredSession('s1', clock)
+  const messages = [noticeMessage(REMINDER_TEXT, REMINDER_SUMMARY), textMessage('続けて')]
+
+  const first = nextSpy()
+  await SENTINELS.get(session)!.onPreStep({ ...payload(session), messages }, first.next)
+  assert.equal(appends.length, 2)
+
+  // 同じ入力の連打は抑える。
+  clock.now = NOW + MINUTE
+  const second = nextSpy()
+  assert.deepEqual(
+    await SENTINELS.get(session)!.onPreStep({ ...payload(session), messages }, second.next),
+    { kind: 'reject' },
+  )
+  assert.equal(appends.length, 2)
+
+  // 出どころの summary が変われば文面が変わるので、間隔内でも通知する。
+  clock.now = NOW + 2 * MINUTE
+  const changed = [noticeMessage(REMINDER_TEXT, '別の説明'), textMessage('続けて')]
+  await SENTINELS.get(session)!.onPreStep({ ...payload(session), messages: changed }, nextSpy().next)
+  assert.equal(appends.length, 4)
 })
 
 test('#7: source の無いメッセージがあっても、同じステップのユーザーの送信は止める', async () => {
