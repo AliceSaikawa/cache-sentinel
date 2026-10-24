@@ -10,10 +10,10 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
 
 针对已超过提示缓存有效时间的会话，本插件可通过以下 2 种方式防止误发送：
 
-- **禁止输入（`block`）**：保持会话可打开和阅读，仅阻止调用模型的发送操作。若希望继续发送，可通过输入框上方的按钮或 `/unlock` 命令仅允许下一次发送。
+- **禁止输入（`block`）**：保持会话可打开和阅读，仅阻止你的发送。代理正在进行的工作（工具执行、作业、子代理、目标、提醒）不会被阻止。若希望继续发送，可通过输入框上方的按钮或 `/unlock` 命令仅允许下一次发送。
 - **自动归档（`archive`）**：自动归档一段时间未更新的会话，将其从侧边栏隐藏并设为不可打开。
 
-您可以随时在聊天输入框中通过 `/sentinel` 命令切换到结合两者的 `both` 模式（60 分钟后禁止输入，24 小时后归档），或暂时停用功能的 `off` 模式。
+您可以随时在聊天输入框中通过 `/sentinel` 命令切换到结合两者的 `both` 模式（60 分钟后禁止输入，24 小时后归档），或暂时停用功能的 `off` 模式。（在官方 Web UI 中，带参数的 `/sentinel` 目前无法从输入框执行：[#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)。）
 
 ## 安装
 
@@ -55,7 +55,7 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
 
 | 模式 | 行为 |
 |---|---|
-| `block`（默认） | 距最后一次响应超过 `idleMinutes`（默认 60 分钟）后禁止输入（仍可浏览）。用 `/unlock` 允许下 1 次发送 |
+| `block`（默认） | 距最后一次响应超过 `idleMinutes`（默认 60 分钟）后阻止用户的发送（仍可浏览）。不阻止代理正在进行的工作。用 `/unlock` 允许下 1 次发送 |
 | `archive` | 距最后一次更新超过 `idleMinutes`（默认 60 分钟）后自动归档（从侧边栏隐藏且无法打开） |
 | `both` | 距最后一次响应 `idleMinutes`（默认 60 分钟）后禁止输入，距最后一次更新 `archiveAfterMinutes`（默认 1440 分钟 = 24 小时）后自动归档 |
 | `off` | 既不禁止输入也不归档（`/sentinel` 和 `/unlock` 命令仍可执行） |
@@ -67,6 +67,7 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
 - `/sentinel`：显示当前生效模式及其来源（通过 `/sentinel` 设置 / YAML 设置）、阈值、当前会话距最后一次响应的经过分钟数，以及 `dryRun` 状态。
 - `/sentinel block` | `archive` | `both` | `off`：切换生效模式。保存在 `$DSH_HOME/cache-sentinel/profiles/<配置文件>/state.json` 中（按配置文件分开），DSH 重启后依然保持（优先于 YAML 中的 `mode`）。
 - `/sentinel default`：清除通过 `/sentinel` 保存的模式，恢复为 YAML 中的 `mode` 设置。
+- 注意：在官方 Web UI 中，带参数的 `/sentinel`（`block`、`archive`、`both`、`off`、`default`）目前无法从输入框执行，会作为普通消息发送（[#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)）。不带参数的 `/sentinel` 和 `/unlock` 可以使用。在修复之前，请通过 YAML 中的 `mode` 切换模式。
 
 ### `/unlock` 命令
 
@@ -79,13 +80,14 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
 - **显示语言**：界面文字跟随环境。Host 按 `LC_ALL`、`LC_MESSAGES`、`LANG`、系统区域设置的顺序判定，官方 Web UI 按浏览器语言（`navigator.languages`）判定。支持英语、日语和简体中文，未支持的语言回退为英语。日志输出（以 `[cache-sentinel]` 开头的行）仍为日语。
 - **被阻止时（官方 Web UI 与 M3E 共通）**：
   - 会话内会以命令结果行的形式显示“已阻止发送(距最后一次响应 N 分钟，因为缓存很可能已过期)。”、“可用 /unlock 允许下 1 次发送。”，以及被丢弃的输入文本（每条最多 2000 字符）。
-  - 当输入消息为 0 条的步骤（如自动继续）被连续拒绝时，同一会话内的通知会抑制为最多每 10 分钟 1 次。
 - **发送前的横幅显示**：
   - **官方 Web UI**：客户端插件（`lib/client.js`）会在输入框上方（`conversation.input.dock`）显示状态横幅。
     - 已过期：“缓存已过期(距最后一次响应 N 分钟)。直接发送将被阻止。”与“允许下 1 次发送(/unlock)”按钮
     - 允许中：“正允许下一次发送(将按无缓存价格计费)。剩余 M 分钟”
     - 如果按钮无法执行 `/unlock`，警告下方会显示原因。此时请在输入框中发送 `/unlock`。
   - **M3E（`dsh-webui-m3e`）**：被阻止时的会话内通知行可以显示，但由于 M3E 不会加载其他插件的客户端包，发送前的横幅显示需要 M3E 侧的支持。
+- **与其他插件并用（如 rdsh-ui-comfort）**：
+  - 启用把第 1 次 Enter 变为换行的插件（`rdsh-ui-comfort` 等）后，第 1 次 Enter 不会发送，只会插入换行。这是该插件对按键的处理方式，cache-sentinel 并未阻止输入。在短时间内（rdsh-ui-comfort 默认 1.5 秒内）再按一次 Enter 才会发送；若此时已过期，则会在服务端被阻止，并在会话内显示阻止通知。间隔较久后再按 Enter，只会再插入一个换行。
 - **状态获取 API**：
   - `GET /api/cache-sentinel.status?sessionId=<id>`（带 Connection 认证）返回会话的状态 JSON。
 
@@ -115,8 +117,12 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
 
 ### 禁止输入（`block` / `both` 模式）
 
-- 在 `agent/pre-step` 钩子的最外层（`prepend: true`）于步骤开始前进行判定。由于在自动压缩（`dsh-compaction-basic`）之前判定，缓存已过期的会话中也不会因自动压缩而触发模型调用。
-- 阻止对象不限消息来源：用户发送、提醒、目标自动继续、后台作业完成通知、子代理继续，以及长时间工具执行后的下一步骤均在对象范围内。
+- 在 `agent/pre-step` 钩子的最外层（`prepend: true`）于步骤开始前进行判定。由于在自动压缩（`dsh-compaction-basic`）之前判定，被阻止的步骤也不会因自动压缩而触发模型调用。
+- 只阻止包含用户发送（`source.kind` 为 `user` 的消息）的轮次的第一个步骤。以下步骤即使缓存已过期也会放行，可能会在无缓存的情况下发送：
+  - 同一轮次的第 2 个及之后的步骤（如轮次进行中到达的作业完成通知或插入发送）。工具执行后的后续步骤也属于此类，但最后响应时间会在工具结束时写入的 `step/end` 处更新，因此通常不会被判定为过期（参见[限制](#限制)）。
+  - 不含用户发送而开始的轮次（后台作业完成通知、来自子代理的消息和完成通知、目标自动继续、提醒、webhook。webhook 仅存在于 DSH 0.2.0-rc.2）。
+- 因上述原因放行已过期的步骤时，会在日志中记录原因（参见[查看日志](#查看日志)）。
+- 如果用户发送与其他输入（如正在等待的作业完成通知）进入同一步骤，则整个步骤都会被阻止，该输入也会被丢弃。
 - 经过时间根据会话最后一次 `step/end` 事件的时间戳（包含从分叉继承的历史）计算。尚无模型响应的新会话，或经过时间恰好在 `idleMinutes` 分钟以内的会话会直接放行。
 - 拒绝步骤时不会发出 API 请求，也不会产生费用。**原本准备进入该步骤的发送消息会被丢弃**，请在解除后重新输入（被丢弃的文本会显示在会话内的阻止通知中）。
 
@@ -132,7 +138,12 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
 
 - **同时运行多个配置文件**：`state.json` 按配置文件分开保存（`$DSH_HOME/cache-sentinel/profiles/<配置文件>/state.json`），因此模式、`baselineAt` 和解除归档记录不会互相覆盖。从旧版本升级时，各配置文件在首次启动时会沿用原来的 `$DSH_HOME/cache-sentinel/state.json` 的内容（原文件不会被删除，之后也不再读取）。无法获取配置文件名的环境仍使用原来的文件。但归档状态保存在 DSH 的共享文件 `$DSH_HOME/storages/workspace.json` 中，插件无法将其分离：DSH 在启动时只读取一次，之后不再重新读取，每次写入都会替换整个文件。因此同时运行两个配置文件时，一方的归档 / 取消归档 / 置顶修改可能被另一方的写入覆盖而丢失。**如果使用 `archive` / `both`，请只在其中一个配置文件中启用。**
 - 由于 M3E 不会加载其他插件的客户端包，发送前的横幅显示需要 M3E 侧的支持（被阻止时的会话内通知仅靠 Host 侧即可显示）。
-- 在子代理会话中，无法从 GUI 执行 `/unlock`。
+- 在子代理会话中，无法从 GUI 执行 `/unlock`。来自父代理的消息不会被阻止，但从 GUI 直接发送给子代理的消息，在子代理一侧缓存已过期时会被阻止。
+- 即使由用户操作产生，非普通发送的输入也不会被阻止：
+  - 通过 `/goal <目标>` 创建目标、通过 `/goal edit` 编辑目标、恢复目标。即使缓存已过期，目标也会运行。
+  - 带附件的 `/goal`。附件会作为普通发送先进入，因此会被阻止并丢弃，目标将在没有附件的情况下运行（根据代码得出的行为，未在实际环境中确认）。
+  - 缓存过期后对提问（`ask_user_question`）的回答。如果阻止，回答会被丢弃。问题会恢复为等待回答的状态，但用户以为已经回答过，很难意识到需要重新回答。
+- 超过 `idleMinutes` 的工具执行之后的后续步骤会在无缓存的情况下发送，但插件不会检测到（也不会记录日志）。这是因为最后响应时间会在工具结束时写入的 `step/end` 处更新。
 - 标题自动生成（`session-title-first-prompt-llm`）会在首次发送时独立调用模型，不在门控对象范围内（仅限新会话或分叉的首次发送，且只发送第一条消息）。
 - 提示缓存的实际寿命取决于提供方和请求内容。本插件仅根据经过时间进行近似判定。
 
@@ -144,7 +155,7 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
 
 ### 查看日志
 
-启动、阻止、`/unlock` 许可、模式变更和归档均会带 `[cache-sentinel]` 前缀输出到标准输出 / 标准错误以及 DSH 的日志器中。
+启动、阻止、虽已过期但仍放行的步骤、`/unlock` 许可、模式变更和归档均会带 `[cache-sentinel]` 前缀输出到标准输出 / 标准错误以及 DSH 的日志器中。
 
 作为 systemd 用户服务（`deepseek-harness`）运行时的日志查看示例：
 
@@ -200,9 +211,9 @@ node scripts/dsh-compat.ts /var/tmp/dsh-compat 0.2.1-rc.1 0.2.1-rc.2
 ## 支持版本与运行环境
 
 - **DeepSeek Harness（DSH）**：**0.2.0-rc.2 ～ 0.2.1-rc.1**（包含 0.2.1-alpha.1～alpha.5）
-  - **0.2.0-rc.2**：已在真实环境确认。
-  - **0.2.1-alpha.1～alpha.5、0.2.1-rc.1**：已将 cache-sentinel 使用的 API 的类型定义与实现同 0.2.0-rc.2 进行比较确认（2026-10-17）。未在真实环境确认。在 0.2.1-rc.1 中，来自浏览器以外的连接端的状态获取 API 会返回 403（该连接端仅是发送前横幅不显示）。
-  - 依据请参阅 [docs/spike.md](docs/spike.md)。确认新版本时可使用 [scripts/dsh-compat.ts](scripts/dsh-compat.ts)。
+  - **0.2.0-rc.2、0.2.1-rc.1**：已使用 npm 发布的 DSH 在真实环境确认（`web` 配置文件，2026-10-18）。确认的功能包括输入阻止、`/unlock`、`/sentinel`（不带参数时从输入框；带参数时仅通过 RPC 的 `commands/execute`，见 [#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)）、归档周期、对话中的阻止通知以及输入框上方的横幅。两个版本的结果相同。使用的 cache-sentinel 是 main 的 `86a77f6`，早于横幅按钮的修复（[#34](https://github.com/AliceSaikawa/cache-sentinel/pull/34)），因此按钮无法使用。修复后的按钮仅在 0.2.0-rc.2 上确认过。详情请参阅 [docs/dsh-version-check.md](docs/dsh-version-check.md)。
+  - **0.2.1-alpha.1～alpha.5**：未在真实环境确认。已将 cache-sentinel 使用的 API 的类型定义与实现同 0.2.0-rc.2 进行比较确认（2026-10-17）。依据请参阅 [docs/spike.md](docs/spike.md)。
+  - 确认新版本时可使用 [scripts/dsh-compat.ts](scripts/dsh-compat.ts)。
 - **DSH 配置文件**：`web` 和 `desktop`，即 `dsh.profile.bundles` 中包含 `@deepseek-ai/dsh-web-app` 的配置文件（由 `web` 模板创建的配置文件也包括在内）。cache-sentinel 需要 `workspaceRegistry` 和 `connection` 服务，而只有该 bundle 提供这两项服务。
   - 在 `headless`、`acp` 等其他配置文件中，cache-sentinel 不会启动。它会一直等待这些服务，因此输入阻止、归档、`/sentinel`、`/unlock` 均不可用。不会报错，也不会输出 `[cache-sentinel]` 的启动日志。
   - `desktop` 与 `web` 使用相同的 bundle，但尚未在真实环境确认。npm 版 `dsh` CLI 不接受 `desktop` 配置文件的插件管理，请使用随 Desktop 应用安装的 `dsh` 命令添加。

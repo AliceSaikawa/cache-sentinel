@@ -314,7 +314,12 @@ test('T26b (6): baselineAt が無い archive の初回 tick は基準を保存�
 
 test('T26b (7): block は失効セッションで reject、archive は同じセッションでも next を呼ぶ (C1)', async () => {
   const events: readonly TimedEvent[] = [{ type: 'step/end', time: NOW - 61 * MINUTE }]
-  const payload: PreStepPayload = { agent: makeAgent('s1', events), turn: 1, step: 1 }
+  const payload: PreStepPayload = {
+    agent: makeAgent('s1', events),
+    messages: [{ content: [{ type: 'text', text: '入力' }], source: { kind: 'user' } }],
+    turn: 1,
+    step: 1,
+  }
 
   const blockHarness = makeHarness(parseTestConfig({ mode: 'block', idleMinutes: 60 }), stateWith())
   let blockNext = 0

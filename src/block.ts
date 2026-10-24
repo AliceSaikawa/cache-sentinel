@@ -1,19 +1,17 @@
 /**
- * 入力禁止(block)— spec v0.4「入力禁止の詳細」§1〜§9。
- * 最後のモデル応答から idleMinutes を超えたセッションでは、モデル / API への送信(ステップ)を拒否する。
+ * 入力禁止(block)— spec「入力禁止の詳細」§1〜§9。
+ * 最後のモデル応答から idleMinutes を超えたセッションでは、ユーザーの送信で始まるターンの最初のステップを拒否する。
+ * ターン途中のステップと、ユーザーの送信を含まない入力(ジョブ完了・サブエージェント・ゴール・リマインダーなど)は通す。
  * `/unlock` で次の送信を 1 回だけ許可する。ゲートが働くかは `isActive()`(実効モード)で毎回決める。
  */
 import type { Config } from './config.ts'
-import { decideGate } from './gate.ts'
+import { classifyStep, decideGate } from './gate.ts'
 import type { Locale } from './i18n.ts'
 import { LastResponseTracker, type TimedEvent } from './last-response.ts'
 import type { Logger } from './log.ts'
-import { buildBlockNotice, NoticeThrottle, type NoticeMessage } from './notice.ts'
+import { buildBlockNotice, type NoticeMessage } from './notice.ts'
 import { computeStatus, type StatusPayload } from './status.ts'
 import { decideUnlock, UnlockStore, unlockMessage } from './unlock.ts'
-
-/** 入力 0 件の拒否を通知する最短間隔(spec-ui.md §D)。 */
-export const NOTICE_INTERVAL_MS = 10 * 60_000
 
 /** Session のうち使う部分(dsh-session の Session)。 */
 export interface SessionLike {
@@ -28,12 +26,22 @@ export interface AgentLike {
   readonly session: SessionLike
 }
 
+/** `agent/pre-step` の messages の 1 件のうち使う部分(dsh-llm の UserMessage)。 */
+export interface StepMessage extends NoticeMessage {
+  /**
+   * 入力の出どころ。ユーザーの送信は `'user'`(spike.md「止める対象の判定材料」)。
+   * DSH の型では必須だが、欠けたメッセージ 1 件でステップ全体が判定の例外(fail-open)にならないよう任意として読む。
+   */
+  readonly source?: { readonly kind: string }
+}
+
 /** `agent/pre-step` の payload のうち使う部分。 */
 export interface PreStepPayload {
   agent: AgentLike
   /** このステップに入る予定の入力。拒否すると破棄される。 */
-  messages?: readonly NoticeMessage[]
+  messages: readonly StepMessage[]
   turn: number
+  /** ターン内のステップ番号(1 から)。 */
   step: number
 }
 
@@ -74,14 +82,12 @@ export function createSentinel(
   const tracker = new LastResponseTracker((id) => (loading?.id === id ? loading.snapshotEvents() : undefined))
   const unlocks = new UnlockStore()
   const ttlMs = config.unlockTtlMinutes * 60_000
-  const throttle = new NoticeThrottle(NOTICE_INTERVAL_MS)
   let noticeCounter = 0
 
   /** 会話にブロック通知を出す(両 UI がコマンド結果として描画する)。失敗しても拒否は続ける。 */
   const notify = (session: SessionLike, idleMinutes: number, messages: readonly NoticeMessage[]): void => {
-    const at = now()
-    if (session.append === undefined || !throttle.shouldNotify(session.id, at, messages.length > 0)) return
-    const commandId = `cache-sentinel-${session.id}-${at}-${++noticeCounter}`
+    if (session.append === undefined) return
+    const commandId = `cache-sentinel-${session.id}-${now()}-${++noticeCounter}`
     try {
       session.append('command/run', { commandId, name: 'cache-sentinel', args: '', source: { kind: 'user' } })
       session.append('command/done', { commandId, kind: 'error', text: buildBlockNotice({ idleMinutes, messages }, locale) })
@@ -104,15 +110,18 @@ export function createSentinel(
       if (!isActive()) return next()
       const session = payload.agent.session
       let decision: ReturnType<typeof decideGate>
+      let sourceKinds: string[]
       try {
         const at = now()
         unlocks.prune(at, ttlMs)
+        sourceKinds = payload.messages.map((message) => message.source?.kind ?? '(source なし)')
         decision = decideGate({
           now: at,
           lastResponseAt: lastResponseOf(session),
           idleMinutes: config.idleMinutes,
           grantedAt: unlocks.grantedAt(session.id),
           unlockTtlMinutes: config.unlockTtlMinutes,
+          stepKind: classifyStep(payload.step, sourceKinds),
         })
       } catch (error) {
         // 判定できないときは作業を止めない(spec §7)。
@@ -120,19 +129,32 @@ export function createSentinel(
         return next()
       }
 
+      const position = `turn ${payload.turn} step ${payload.step}`
       if (decision.kind === 'pass') {
-        if (decision.reason === 'unlocked') log.info(`/unlock の許可で通しました: ${session.id}`)
+        switch (decision.reason) {
+          case 'unlocked':
+            log.info(`/unlock の許可で通しました: ${session.id}`)
+            break
+          case 'mid-turn':
+            log.info(`失効していますがターンの途中なので通しました: ${session.id} (${position})`)
+            break
+          case 'other-input': {
+            const sources = sourceKinds.length === 0 ? 'なし' : sourceKinds.join(', ')
+            log.info(`失効していますがユーザーの送信ではないので通しました: ${session.id} (${position}, 入力: ${sources})`)
+            break
+          }
+        }
         return next()
       }
 
       const minutes = Math.floor(decision.idleMs / 60_000)
-      const where = `${session.id} (最終応答から ${minutes} 分, turn ${payload.turn} step ${payload.step})`
+      const where = `${session.id} (最終応答から ${minutes} 分, ${position})`
       if (config.dryRun) {
         log.info(`dryRun: ブロック対象 ${where}`)
         return next()
       }
       log.info(`ブロックしました: ${where}。/unlock で次の送信を許可できます`)
-      notify(session, minutes, payload.messages ?? [])
+      notify(session, minutes, payload.messages)
       return { kind: 'reject' }
     },
 
