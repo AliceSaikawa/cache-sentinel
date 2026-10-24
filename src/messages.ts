@@ -35,6 +35,10 @@ export interface Messages {
   readonly bannerUnlocked: string
   /** 許可中(残り時間あり)の情報。 */
   readonly bannerUnlockedRemaining: (remainingMinutes: number) => string
+  /** ボタンで `/unlock` を実行できなかったとき。`detail` は失敗の内容(エラーコードなど、翻訳しない)。 */
+  readonly bannerUnlockFailed: (detail: string) => string
+  /** ボタンで実行した `/unlock` が Host に見つからなかったとき。 */
+  readonly bannerUnlockNotFound: string
 
   // --- /sentinel の出力 (src/mode.ts) ---
   /** 実効モードの行(`/sentinel` で設定)。 */
@@ -91,6 +95,8 @@ export interface Messages {
   readonly commandUnlockDescription: string
   /** `/sentinel` の説明。 */
   readonly commandSentinelDescription: string
+  /** `/sentinel` の引数のヒント(入力欄のプレースホルダ)。引数は任意。 */
+  readonly commandSentinelInputHint: string
 }
 
 const en: Messages = {
@@ -109,6 +115,8 @@ const en: Messages = {
   bannerUnlocked: 'Next send allowed (uncached input rates will apply).',
   bannerUnlockedRemaining: (remainingMinutes) =>
     `Next send allowed (uncached input rates will apply). ${remainingMinutes} min left`,
+  bannerUnlockFailed: (detail) => `Could not run /unlock (${detail}). Send /unlock from the input box instead.`,
+  bannerUnlockNotFound: '/unlock was not found. The cache-sentinel host plugin may not be running.',
 
   modeLineFromCommand: (mode, configMode) =>
     `cache-sentinel: mode ${mode} (set with /sentinel, YAML default is ${configMode})`,
@@ -144,6 +152,7 @@ const en: Messages = {
     'Allow the next send in a session where sending is blocked because the cache expired (cache-sentinel)',
   commandSentinelDescription:
     'Show cache-sentinel status and switch mode: /sentinel [block|archive|both|off|default]',
+  commandSentinelInputHint: '[block|archive|both|off|default]',
 }
 
 const ja: Messages = {
@@ -162,6 +171,8 @@ const ja: Messages = {
   bannerUnlocked: '次の送信を許可中(キャッシュなしの料金になります)。',
   bannerUnlockedRemaining: (remainingMinutes) =>
     `次の送信を許可中(キャッシュなしの料金になります)。あと ${remainingMinutes} 分`,
+  bannerUnlockFailed: (detail) => `/unlock を実行できませんでした(${detail})。入力欄から /unlock を送ってください。`,
+  bannerUnlockNotFound: '/unlock が見つかりません。cache-sentinel の Host 側が動いていない可能性があります。',
 
   modeLineFromCommand: (mode, configMode) =>
     `cache-sentinel: モード ${mode}(/sentinel で設定、YAML の既定は ${configMode})`,
@@ -197,6 +208,7 @@ const ja: Messages = {
     'キャッシュ切れで入力禁止のセッションで、次の送信を許可する(cache-sentinel)',
   commandSentinelDescription:
     'cache-sentinel の状態表示とモード切り替え: /sentinel [block|archive|both|off|default]',
+  commandSentinelInputHint: '[block|archive|both|off|default]',
 }
 
 const zhCN: Messages = {
@@ -215,6 +227,8 @@ const zhCN: Messages = {
   bannerUnlocked: '正允许下一次发送(将按无缓存价格计费)。',
   bannerUnlockedRemaining: (remainingMinutes) =>
     `正允许下一次发送(将按无缓存价格计费)。剩余 ${remainingMinutes} 分钟`,
+  bannerUnlockFailed: (detail) => `无法执行 /unlock(${detail})。请在输入框中发送 /unlock。`,
+  bannerUnlockNotFound: '找不到 /unlock。cache-sentinel 的 Host 端可能未在运行。',
 
   modeLineFromCommand: (mode, configMode) =>
     `cache-sentinel：模式 ${mode}(通过 /sentinel 设置，YAML 默认为 ${configMode})`,
@@ -250,6 +264,7 @@ const zhCN: Messages = {
     '在因缓存过期而禁止发送的会话中，允许下一次发送(cache-sentinel)',
   commandSentinelDescription:
     '显示 cache-sentinel 状态并切换模式：/sentinel [block|archive|both|off|default]',
+  commandSentinelInputHint: '[block|archive|both|off|default]',
 }
 
 /** 表示言語ごとの文言カタログ。 */

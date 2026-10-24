@@ -940,3 +940,140 @@ test('B7: dryRun でも、止める対象でないステップに「ブロック
   assert.equal(result, pass.decision)
   assert.ok(!log.info.some((m) => m.includes('dryRun')), log.info.join('\n'))
 })
+
+// --- B13: サブエージェントの fork の子 (spec §2, #13) ---
+
+/** fork の子を模した偽 Session。snapshotEvents は引き継いだ prefix も返し、ownEvents は子自身の分だけ返す。 */
+function forkChildWith(options: {
+  inherited: readonly TimedEvent[]
+  own: readonly TimedEvent[]
+  header?: SessionLike['header']
+}) {
+  const session: SessionLike = {
+    id: 'child',
+    snapshotEvents: () => [...options.inherited, ...options.own],
+    ownEvents: () => options.own,
+  }
+  return options.header === undefined ? session : { ...session, header: options.header }
+}
+
+/** 子の最初のステップ(最初の課題は source.kind === 'user'、step は 1)。 */
+async function preStepOnChild(session: SessionLike, turn = 1, step = 1) {
+  const log = makeLogger()
+  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
+  const pass = nextSpy()
+  const result = await sentinel.onPreStep(
+    { agent: agentOf(session), messages: [textMessage('調査して')], turn, step },
+    pass.next,
+  )
+  return { result, pass, log }
+}
+
+test('B13: サブエージェントの fork の子の最初のステップは、引き継いだ最終応答が失効していても通す', async () => {
+  // 親は 61 分放置され、そのターン中に fork した。引き継いだ最後の step/end は古いが、子の作成時刻は今。
+  const session = forkChildWith({
+    inherited: [{ type: 'step/end', time: NOW - 61 * MINUTE }],
+    own: [],
+    header: { origin: 'subagent', isSeeded: true, createdAt: NOW - 30_000 },
+  })
+  const { result, pass, log } = await preStepOnChild(session)
+
+  assert.equal(result, pass.decision)
+  assert.equal(pass.calls(), 1)
+  assert.deepEqual(log.info, [])
+})
+
+test('B13: サブエージェントの fork の子でも、子自身の最終応答が失効していれば止める', async () => {
+  // 子が長く放置された場合。ownEvents の step/end は作成時刻より新しいので、そちらが基準になる。
+  const session = forkChildWith({
+    inherited: [{ type: 'step/end', time: NOW - 5 * MINUTE }],
+    own: [{ type: 'step/end', time: NOW - 61 * MINUTE }],
+    header: { origin: 'subagent', isSeeded: true, createdAt: NOW - 120 * MINUTE },
+  })
+  const { result, pass } = await preStepOnChild(session, 2)
+
+  assert.deepEqual(result, { kind: 'reject' })
+  assert.equal(pass.calls(), 0)
+})
+
+test('B13: fork の子でも、子自身の最終応答が失効していなければ通す', async () => {
+  const session = forkChildWith({
+    inherited: [{ type: 'step/end', time: NOW - 61 * MINUTE }],
+    own: [{ type: 'step/end', time: NOW - MINUTE }],
+    header: { origin: 'subagent', isSeeded: true, createdAt: NOW - 60 * MINUTE },
+  })
+  const { result, pass } = await preStepOnChild(session, 2)
+
+  assert.equal(result, pass.decision)
+  assert.equal(pass.calls(), 1)
+})
+
+test('B13: origin の無い fork の子(GUI など)は従来どおり、引き継いだ最終応答が失効していれば止める', async () => {
+  const session = forkChildWith({
+    inherited: [{ type: 'step/end', time: NOW - 61 * MINUTE }],
+    own: [],
+    header: { isSeeded: true, createdAt: NOW - 30_000 },
+  })
+  const { result, pass } = await preStepOnChild(session)
+
+  assert.deepEqual(result, { kind: 'reject' })
+  assert.equal(pass.calls(), 0)
+})
+
+test('B13: header が無い Session は、ownEvents があっても従来どおり全イベントから判定する(後方互換)', async () => {
+  // header を読めない版・偽 Session では、引き継いだ古い step/end で従来どおり失効と判定する。
+  const session = forkChildWith({
+    inherited: [{ type: 'step/end', time: NOW - 61 * MINUTE }],
+    own: [],
+  })
+  const { result, pass } = await preStepOnChild(session)
+
+  assert.deepEqual(result, { kind: 'reject' })
+  assert.equal(pass.calls(), 0)
+})
+
+test('B13: サブエージェントの spawn(seed 無し・step/end 無し)は通す', async () => {
+  const session = forkChildWith({ inherited: [], own: [], header: { origin: 'subagent', createdAt: NOW } })
+  const { result, pass } = await preStepOnChild(session)
+
+  assert.equal(result, pass.decision)
+  assert.equal(pass.calls(), 1)
+})
+
+test('B13: fork でないサブエージェント(isSeeded でない)は作成時刻を基準にしない(従来どおり、応答が無ければ通す)', async () => {
+  // 作成から 2 時間たってから最初のステップが来ても、step/end が無いので新規として通す。
+  const session = forkChildWith({ inherited: [], own: [], header: { origin: 'subagent', createdAt: NOW - 120 * MINUTE } })
+  const { result, pass } = await preStepOnChild(session)
+
+  assert.equal(result, pass.decision)
+  assert.equal(pass.calls(), 1)
+})
+
+test('B13: 古い fork の子を再開して最初のステップが来たとき、子自身の応答が無く作成から idleMinutes を超えていれば止める', async () => {
+  // GUI から子に直接送った場合など。作成時刻が基準なので、作成から 61 分で失効。
+  const session = forkChildWith({
+    inherited: [{ type: 'step/end', time: NOW - 90 * MINUTE }],
+    own: [],
+    header: { origin: 'subagent', isSeeded: true, createdAt: NOW - 61 * MINUTE },
+  })
+  const { result, pass } = await preStepOnChild(session)
+
+  assert.deepEqual(result, { kind: 'reject' })
+  assert.equal(pass.calls(), 0)
+})
+
+test('B13: fork の子で ownEvents が無い Session は snapshotEvents で代用し、子自身の新しい応答で通す', async () => {
+  // 作成は 2 時間前だが、子自身が 1 分前に応答している。snapshotEvents には引き継いだ古い step/end も入る。
+  const session: SessionLike = {
+    id: 'child',
+    snapshotEvents: () => [
+      { type: 'step/end', time: NOW - 180 * MINUTE },
+      { type: 'step/end', time: NOW - MINUTE },
+    ],
+    header: { origin: 'subagent', isSeeded: true, createdAt: NOW - 120 * MINUTE },
+  }
+  const { result, pass } = await preStepOnChild(session, 2)
+
+  assert.equal(result, pass.decision)
+  assert.equal(pass.calls(), 1)
+})
