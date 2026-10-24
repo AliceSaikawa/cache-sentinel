@@ -7,9 +7,11 @@ import { createElement as h, useCallback, useEffect, useState } from 'react'
 import { resolveLocale, type Locale } from '../i18n.ts'
 import { bannerFor, unlockLabel, type StatusLike } from './banner.ts'
 import { fetchStatus } from './fetch-status.ts'
+import { runUnlock } from './run-unlock.ts'
 
 export const name = 'cache-sentinel-client'
-export const inject = ['slots', 'remote']
+/** `remote.commands` は `remote` とは別のサービスキーなので、両方を宣言する(docs/spike.md、#26)。 */
+export const inject = ['slots', 'remote', 'remote.commands']
 
 /** 取得の間隔(spec-ui.md §E2)。 */
 export const POLL_MS = 30_000
@@ -75,6 +77,7 @@ const styles = {
   warning: { background: 'rgba(245, 158, 11, 0.14)', border: '1px solid rgba(245, 158, 11, 0.45)' },
   info: { background: 'rgba(59, 130, 246, 0.10)', border: '1px solid rgba(59, 130, 246, 0.35)' },
   text: { flex: 1 },
+  failure: { display: 'block', marginTop: 4, fontWeight: 600 },
   button: {
     flex: 'none',
     padding: '4px 10px',
@@ -90,6 +93,7 @@ const styles = {
 function Banner({ sessionId, locale, unlock }: BannerProps) {
   const [status, setStatus] = useState<StatusLike | undefined>(undefined)
   const [busy, setBusy] = useState(false)
+  const [failure, setFailure] = useState<string | undefined>(undefined)
 
   const load = useCallback(async () => {
     setStatus(await fetchStatus(sessionId, document.baseURI))
@@ -97,6 +101,7 @@ function Banner({ sessionId, locale, unlock }: BannerProps) {
 
   useEffect(() => {
     setStatus(undefined)
+    setFailure(undefined)
     void load()
     const timer = setInterval(() => void load(), POLL_MS)
     const onVisible = () => {
@@ -110,23 +115,35 @@ function Banner({ sessionId, locale, unlock }: BannerProps) {
   }, [load])
 
   const banner = bannerFor(status, Date.now(), locale)
+  const warning = banner?.tone === 'warning'
+  // 失敗の文面は警告に付けて出す。警告が消えたら(許可中になった等)捨てる。
+  useEffect(() => {
+    if (!warning) setFailure(undefined)
+  }, [warning])
   if (banner === undefined) return null
 
   const onUnlock = async () => {
     setBusy(true)
-    try {
-      await unlock()
-    } finally {
-      setBusy(false)
-      await load()
-    }
+    setFailure(undefined)
+    const result = await runUnlock(unlock, locale)
+    if (result !== undefined) console.warn(`[cache-sentinel] バナーからの /unlock に失敗しました: ${result}`)
+    setFailure(result)
+    setBusy(false)
+    await load()
   }
 
   return h(
     'div',
     { role: 'status', 'data-testid': 'cache-sentinel-banner', style: { ...styles.box, ...styles[banner.tone] } },
-    h('span', { style: styles.text }, banner.text),
-    banner.tone === 'warning'
+    h(
+      'span',
+      { style: styles.text },
+      banner.text,
+      warning && failure !== undefined
+        ? h('span', { role: 'alert', 'data-testid': 'cache-sentinel-unlock-error', style: styles.failure }, failure)
+        : null,
+    ),
+    warning
       ? h('button', { type: 'button', style: styles.button, disabled: busy, onClick: () => void onUnlock() }, unlockLabel(locale))
       : null,
   )

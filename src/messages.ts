@@ -33,6 +33,10 @@ export interface Messages {
   readonly bannerUnlocked: string
   /** 許可中(残り時間あり)の情報。 */
   readonly bannerUnlockedRemaining: (remainingMinutes: number) => string
+  /** ボタンで `/unlock` を実行できなかったとき。`detail` は失敗の内容(エラーコードなど、翻訳しない)。 */
+  readonly bannerUnlockFailed: (detail: string) => string
+  /** ボタンで実行した `/unlock` が Host に見つからなかったとき。 */
+  readonly bannerUnlockNotFound: string
 
   // --- /sentinel の出力 (src/mode.ts) ---
   /** 実効モードの行(`/sentinel` で設定)。 */
@@ -106,6 +110,8 @@ const en: Messages = {
   bannerUnlocked: 'Next send allowed (uncached input rates will apply).',
   bannerUnlockedRemaining: (remainingMinutes) =>
     `Next send allowed (uncached input rates will apply). ${remainingMinutes} min left`,
+  bannerUnlockFailed: (detail) => `Could not run /unlock (${detail}). Send /unlock from the input box instead.`,
+  bannerUnlockNotFound: '/unlock was not found. The cache-sentinel host plugin may not be running.',
 
   modeLineFromCommand: (mode, configMode) =>
     `cache-sentinel: mode ${mode} (set with /sentinel, YAML default is ${configMode})`,
@@ -158,6 +164,8 @@ const ja: Messages = {
   bannerUnlocked: '次の送信を許可中(キャッシュなしの料金になります)。',
   bannerUnlockedRemaining: (remainingMinutes) =>
     `次の送信を許可中(キャッシュなしの料金になります)。あと ${remainingMinutes} 分`,
+  bannerUnlockFailed: (detail) => `/unlock を実行できませんでした(${detail})。入力欄から /unlock を送ってください。`,
+  bannerUnlockNotFound: '/unlock が見つかりません。cache-sentinel の Host 側が動いていない可能性があります。',
 
   modeLineFromCommand: (mode, configMode) =>
     `cache-sentinel: モード ${mode}(/sentinel で設定、YAML の既定は ${configMode})`,
@@ -210,6 +218,8 @@ const zhCN: Messages = {
   bannerUnlocked: '正允许下一次发送(将按无缓存价格计费)。',
   bannerUnlockedRemaining: (remainingMinutes) =>
     `正允许下一次发送(将按无缓存价格计费)。剩余 ${remainingMinutes} 分钟`,
+  bannerUnlockFailed: (detail) => `无法执行 /unlock(${detail})。请在输入框中发送 /unlock。`,
+  bannerUnlockNotFound: '找不到 /unlock。cache-sentinel 的 Host 端可能未在运行。',
 
   modeLineFromCommand: (mode, configMode) =>
     `cache-sentinel：模式 ${mode}(通过 /sentinel 设置，YAML 默认为 ${configMode})`,
