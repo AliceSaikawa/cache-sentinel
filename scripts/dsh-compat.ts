@@ -33,7 +33,7 @@ const MAX_DETAILS = 10
 
 /**
  * cache-sentinel が使う DSH のパッケージ。ここが変われば互換性を確認し直す。
- * docs/spike.md の互換調査で比べた対象と同じ。
+ * docs/spike.md の互換調査で比べた対象に、その後に依存したもの(#9 の dsh-app-boot・dsh。spike.md Z1・Z3)を足したもの。
  */
 export const PACKAGES: readonly string[] = [
   '@deepseek-ai/dsh-agent',
@@ -52,6 +52,9 @@ export const PACKAGES: readonly string[] = [
   '@deepseek-ai/dsh-base',
   '@deepseek-ai/dsh-web-app',
   '@deepseek-ai/dsh-headless',
+  // #9: ProfileContext の型とプロファイル名の検証(dsh-app-boot)、profileContext の provide(dsh)。
+  '@deepseek-ai/dsh-app-boot',
+  '@deepseek-ai/dsh',
 ]
 
 /** パッケージ 1 つ分のファイル一覧。相対パス → 内容のハッシュ。 */

@@ -11,6 +11,7 @@ import {
   loadState,
   parseState,
   saveState,
+  stateExists,
   tempPathFor,
 } from '../src/state.ts'
 
@@ -317,6 +318,38 @@ test('saveState は書き込み前に親ディレクトリを確実に用意す�
   await saveState(path, EMPTY)
   assert.equal(await exists(path), true)
 })
+
+// --- stateExists (Issue #9: 移行の判断) ---
+
+test('stateExists はファイルがあれば true、無ければ false (ファイルを作らない)', async (t) => {
+  const dir = await tmpDir(t)
+  const path = join(dir, 'state.json')
+
+  assert.equal(await stateExists(path), false)
+  assert.deepEqual(await readdir(dir), [])
+
+  await writeFile(path, '{"version":2,"unarchivedAt":{}}', 'utf8')
+  assert.equal(await stateExists(path), true)
+})
+
+test('stateExists はディレクトリでも true、親ディレクトリが無ければ false', async (t) => {
+  const dir = await tmpDir(t)
+
+  assert.equal(await stateExists(dir), true)
+  assert.equal(await stateExists(join(dir, 'nope', 'state.json')), false) // ENOENT
+})
+
+test(
+  'stateExists は ENOENT 以外のエラーでは true (移行で上書きしない側に倒す、例外を投げない)',
+  // Windows ではファイルの下のパスが ENOTDIR にならない(ENOENT になる)見込みのため外す(Windows では未確認)。
+  { skip: process.platform === 'win32' ? 'Windows では ENOTDIR を作れない見込み' : false },
+  async (t) => {
+    const dir = await tmpDir(t)
+    await writeFile(join(dir, 'file'), '', 'utf8')
+
+    assert.equal(await stateExists(join(dir, 'file', 'state.json')), true) // ENOTDIR
+  },
+)
 
 // --- tempPathFor (Issue #6: Windows 形式のパスでも保存できること) ---
 

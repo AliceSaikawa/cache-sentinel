@@ -111,7 +111,8 @@
 
 `$PK` = 各版の `node_modules/@deepseek-ai`。方法は、npm から 0.2.1-alpha.1〜alpha.5 と 0.2.1-rc.1 の
 該当パッケージを取得し、型定義(`lib/types/*.d.ts`)と実装(`lib/index.js` など)を 0.2.0-rc.2 と diff したもの。
-行番号は特記なければ rc.1 のもの。DSH の実機起動はしていない(0.2.0-rc.2 の実機確認は上記の各節で実施済み)。
+行番号は特記なければ rc.1 のもの。この調査の時点では DSH の実機起動はしていない。0.2.0-rc.2 と 0.2.1-rc.1 の実機確認は
+2026-10-18 に同じ手順で行った([dsh-version-check.md](dsh-version-check.md))。
 同じ比較は `scripts/dsh-compat.ts` で再実行できる(使い方は README の Development 節)。
 
 ## lib の一致状況(package.json と CHANGELOG を除く)
@@ -128,7 +129,7 @@
 | 2 Session / command イベント | 変更なし | 内部実装のみ | 変更なし | 変更なし |
 | 3 `commands.register` | 変更なし | 変更なし | 変更なし | 変更なし |
 | 4 `workspaceRegistry` / `sessionPersistence.list()` | 変更なし | 任意項目 `formatStatus` の追加のみ | 同左 | 同左 |
-| 5 `connection.fetch.register` | 変更なし | 型は同じ(信頼判定の変更のみ) | 同左 | 型は同じ。owner 以外の Peer に exact route が 403 |
+| 5 `connection.fetch.register` | 変更なし | 型は同じ(信頼判定の変更のみ) | 同左 | 型は同じ。owner 以外の Peer に exact route が 403(配布物の HTTP 経路では owner 以外の Peer は無い) |
 | 6 セッションログの配置 | 変更なし | 変更なし | 変更なし | 変更なし |
 | 7 クライアント(`dsh.client`・`conversation.input.dock`・`remote.commands.execute`) | 変更なし | 変更なし | 変更なし | 変更なし |
 | 8 バンドルの提供サービス | 変更なし | 変更なし | 変更なし | 変更なし |
@@ -158,6 +159,21 @@ dsh-web-app、dsh-headless、cordis。
 5. connection: 提供元は `@deepseek-ai/dsh-client-connection`(dsh-web-app の `id: connection` 行)。
    `ConnectionFetchRoute` は `rpc.d.ts:119-132`、`register` は `:140`。rc.1 では owner 以外の Peer に 403
    (`lib/index.js:830`)。ブラウザは owner(`:714`)。
+   訂正(2026-10-18、実機確認のあと): rc.1 の配布物では、HTTP で来るリクエストの Peer は owner しかない。
+   HTTP の受け口 `admit`(`lib/index.js:742-750`)が返す Peer は、ブラウザ用(`:714`)か `publishPeer`(`:781-790`)で
+   作ったもので、どちらも `principal: { kind: "owner" }`。`Principal` の元になる `PrincipalMap` にも `owner` しか無い
+   (`$PK/dsh-typert-protocol/lib/types/types.d.ts:363-370`)。
+   `admit` は、Cookie の payload が version 1(ブラウザ用。`:278`・`:546-548`)なら `browserPeer` を返す(`:746`)。
+   ブラウザ以外の接続元は、`/connect` に launch token を付けて version 2 の API 用 Cookie を受け取り(`:505-538`)、
+   `authenticateApi`(`:555-558`)で `publishPeer` の Peer に解決される(`:747-749`)。
+   `peers.set` は `publishPeer` の中(`:786`)にしか無く、`createPeer`(`:752`)で作った Peer が HTTP の fetch handler
+   (`:868`・`:1055`、どちらも `admit` の結果を渡す)に届く経路は無い。
+   したがって以前の README の「ブラウザ以外の接続元は 403」は誤り。exact route 固有の 403(`:830`)は、rc.1 の HTTP 経路では
+   プラグインの有無にかかわらず起きない。Host/Origin の検査による 403(`:743`、応答は `:1050-1052`)はこれとは別で、
+   この route でも起きる。
+   実機では Cookie 付きの curl で 200 が返った([dsh-version-check.md](dsh-version-check.md) の手順 13)が、使った Cookie の
+   種類は記録に残っていない。ブラウザ用の Cookie だった可能性があり、`/connect` の API 認証の経路は上のとおりコードを
+   読んで確認しただけで、実機では通していない。
 6. ログ配置: `$PK/dsh-session-persistence-jsonl/lib/index.js:745-965` は rc.2 と同一。`encodeSegment`
    (`:858`)は `~XXXX`、ファイル名は `session.v4.jsonl[.zstd]`、`SESSION_FORMAT_VERSION` は 4。
    root は dsh-base の `dshHomePath('sessions')`。
@@ -222,6 +238,13 @@ dsh-web-app、dsh-headless、cordis。
 - あわせて、`remote.commands.execute` の戻り値は union(`{ok: false, error} | {ok: true, value}`)で、
   公式は `if (!result.ok) throw` で扱う(`$PK/dsh-client-ui-commands/lib/client.js:1068-1069`)。
   戻り値を捨てると実行失敗が無言になる。
+- 型(#26 の修正時に確認): `execute(agentId, line, attachments, signal?): Promise<RemoteResult<object | undefined>>`
+  (`$PK/dsh-api-session-controller/lib/types/client/sessions/remotes.d.ts:14-16`)。`RemoteResult` は
+  `{ ok: true, value } | { ok: false, error: RemoteFailure }`(`$PK/dsh-typert-protocol/lib/types/types.d.ts:67-73`)。
+  `value === undefined` はコマンドが見つからない(公式は「unknown or malformed command」を返す:
+  `$PK/dsh-client-ui-commands/lib/client.js:1070-1073`)。`error` の `code`・`message` は同じ箇所の使い方による。
+  DSH 自身の Session クライアントも `inject` に `'remote'` と `'remote.commands'` を並べている
+  (`$PK/dsh-api-session-controller/lib/types/client/index.js:10-18`)。
 
 ---
 
@@ -327,3 +350,86 @@ P1・P2 の挙動は 0.2.1-rc.2 でも同じ(`$PK` は 0.2.1-rc.2 の `node_modu
   `:1461`(最初の課題 `user`)・`:3196`(GUI からの直接の送信 `user`)。
 - 版の差: 0.2.1-rc.2 には `dsh-webhook` パッケージが無い。agent-team のメッセージは `agent-message`
   (`$PK/dsh-experimental-agent-team/lib/index.js:1598-1609`)。どちらも `user` ではないので、分類の結果は変わらない。
+
+---
+
+# プロファイル名の取得 (2026-10-23) — #9 の state.json のプロファイル別分離の根拠
+
+`$PK` = `<DSH のインストール先>/node_modules/@deepseek-ai`(0.2.1-rc.2)。CLI 本体の `lib/` は `$PK/../../lib/`
+(`@deepseek-ai/dsh/lib/`)。旧版は `npm pack @deepseek-ai/<pkg>@<版>` で `~/AI/tmp/cs-issues/` に展開して読んだ
+(Z2 の表のパスはここからの相対)。実機の起動はしていない(型定義と実装の読解のみ)。コードからの推論である旨は各項に記す。
+
+## Z1: `ctx.get('profileContext')` でプロファイル名が取れる — 確定
+
+- 型: `$PK/dsh-app-boot/lib/types/profile-context.d.ts` の `ProfileContext` は
+  `readonly name: string` を持ち(interface は `:10-25`)、`declare module '@deepseek-ai/cordis'` で
+  `Context.profileContext` を宣言する(`:26-31`)。
+  doc は「Present only in a profile launched by dsh.」— つまり**無い環境がありうる**ので、
+  `ctx.get` は `undefined` を返しうる前提で扱う。
+- provide の実装: `$PK/../../lib/profile-boot-C14i-8IN.js`。`:290` で
+  `const profileContext = { name: options.profile, dir: …, home: resolveDshHome(), … }` を組み立て、
+  `boot()` のコールバックで `hostCtx.provide("profileContext", profileContext)` を呼び(`:304`)、
+  その後にプラグインを読み込む(`:306` の `hostCtx.plugin(PluginPackages, …)`)。
+  プラグインの `apply` より前に provide されるため、`apply()` の時点で読める。
+- 消費例(公式、いずれも `ctx.get("profileContext")` が `undefined` の場合を扱う):
+  - `$PK/dsh-shell-env/lib/index.js:90-94`(`profile.name` と `profile.dir` をシェル環境に載せる)
+  - `$PK/dsh-app-boot/lib/index.js:2313`(`preflight`。`if (profile === void 0) return …`)と
+    `:2399`(`prepareProfilePatches`。`if (ctx.get("profileContext") === void 0) return patches`)
+- **`inject` に足す必要は無い。** `inject` に無いサービスを `ctx.get` で読むのは公式プラグインと同じ使い方で、
+  inject に足すと `profileContext` を provide しないホスト(テスト・別アプリ)でプラグインが `PENDING` のまま起動しなくなる。
+  そのため `HostContext` に `get?` を足し、`ctx.get?.('profileContext')?.name` と optional に読む。
+- **未確認:** `web` プロファイルの実機で `ctx.get('profileContext')` が解決すること。型・provide の実装・
+  公式プラグインの消費例の 3 点から確実と見ているが、実機確認はしていない(タスク指示により実機確認は行わない)。
+  解決しなかった場合は「プロファイル名なし」の経路に落ちて従来どおり共有ファイルを使うだけで、壊れない。
+
+## Z2: 同じ口が 0.2.0-rc.2・0.2.1-rc.1 にもある — 確定
+
+対応範囲(`docs/spec.md`・README の「0.2.0-rc.2〜0.2.1-rc.1」)の両端で確認した。
+
+| 版 | 型 `profile-context.d.ts` | provide の実装 |
+|---|---|---|
+| 0.2.0-rc.2 | `pack-020/ab020/package/lib/types/profile-context.d.ts` | `cs9/cli-020/package/lib/profile-boot-BZ2ZjNWi.js:259-273`(`name: options.profile`、`:273` で provide) |
+| 0.2.1-rc.1 | `cs9/appboot-0.2.1-rc.1/lib/types/profile-context.d.ts`(rc.2 と diff なし) | `cs9/cli-rc1/package/lib/profile-boot-C14i-8IN.js:290-304`(rc.2 のファイルと diff なし) |
+| 0.2.1-rc.2(手元) | `$PK/dsh-app-boot/lib/types/profile-context.d.ts` | `$PK/../../lib/profile-boot-C14i-8IN.js:290-304` |
+
+- 型定義は 0.2.0-rc.2 と 0.2.1-rc.1 で `readBundlePatches` の宣言が増えただけ(`name` は両方にある)。
+- `profile-boot` は 0.2.1-rc.1 と 0.2.1-rc.2 で完全一致、0.2.0-rc.2 とは `initializeProfileFromDefault` の
+  実装だけが違い、`profileContext` の組み立てと provide は同じ。
+- `dsh-shell-env` の消費側も 0.2.1-rc.1 に同じ行がある(`cs9/shell-env-0.2.1-rc.1/lib/index.js:90`)。
+- **未確認:** 0.2.1-alpha.1〜alpha.5 の `dsh-app-boot`。README の対応範囲には含まれるが、
+  `profileContext` は 0.2.0-rc.2 から存在するので alpha 系でも同じと見ている(差分は未取得)。
+
+## Z3: プロファイル名の規則と state.json の置き場所 — 確定(Windows は推測)
+
+- `dsh-app-boot` の `resolveProfileDir` は、`""`、`/` か `\` を含む名前、`.`、`..`、`node_modules` を
+  `dsh: invalid profile name` として throw し、それ以外は `join(home, 'profiles', name)` を返す
+  (`$PK/dsh-app-boot/lib/index.js:546-549`、検査は `:547`、`PROFILES_DIR = "profiles"` は `:507`)。
+  同じ検査が 0.2.1-rc.1(`cs9/appboot-0.2.1-rc.1/lib/index.js:547`)と 0.2.0-rc.2
+  (`pack-020/ab020/package/lib/index.js:525`)にもある。
+- npm 版 CLI の起動では、provide する名前はこの検査を通っている: `$PK/../../lib/profile-boot-C14i-8IN.js:272` の
+  `composeProfile(options.profile, …)` → `:237` の `prepareProfile` → `:218` の `loadProfile` →
+  `$PK/dsh-app-boot/lib/index.js:1066` の `resolveProfileDir(name, home)`。`:290-291` の `name: options.profile` は同じ値。
+  ただし `:237` はアプリが渡す `resolvedProfile`(「application-owned profile」、`:233`)があると `prepareProfile` を
+  呼ばない。この経路を使うアプリ(Desktop など)が名前を検査するかは確認していない。
+- そのため cache-sentinel は、`profileNameOf` で同じ規則を検査し、外れた名前は「プロファイル名なし」として従来の
+  共有ファイルに落とす(念のための検査)。規則に合う名前は変換しない。変換すると `a b` と `a_b` のような
+  別プロファイルが同じファイルを共有し、#9 と同じ競合を新たに作るため。
+- 置き場所は `$DSH_HOME/cache-sentinel/profiles/<名前>/state.json`。`cache-sentinel/<名前>/` だと従来の
+  `cache-sentinel/state.json` や一時ファイル `state.json.<unique>.tmp`(`src/state.ts` の `tempPathFor`)と同じ階層になり、
+  DSH が受け付ける名前 `state.json` のプロファイルでは保存先のディレクトリを作れない。`profiles/` の下に置けば
+  名前空間が分かれる(DSH 自身の `profiles/<名前>` と同じ形)。
+- Windows で使えない文字(`:` `*` `?` `<` `>` `|` など)と予約名(`CON` など)は DSH も検査しない。
+  その名前では DSH の `profiles/<名前>` の作成が先に失敗し、プロファイルとして起動しないはずなので、
+  cache-sentinel でも検査しない(推測。Windows 実機は未確認)。
+
+## Z4: 複数プロファイルの同時利用 — DSH 側の共有状態
+
+- `$DSH_HOME` はプロファイルに依存しない(`$PK/dsh-home-paths/lib/index.js:109-111` の `resolveDshHome`。
+  引数にプロファイル名は入らない)。`dsh-base/cordis.patch.yml:141,185` の `dshHomePath('sessions')` /
+  `dshHomePath('storages')` も同じホームを指す。
+- **アーカイブ状態(`$DSH_HOME/storages/workspace.json`)は全プロファイルで共有され、cache-sentinel から分離できない。**
+  `WorkspaceRegistry` は起動時に `domain.global.get()` をメモリに持ち(`$PK/dsh-workspace/lib/index.js:383-384`)、
+  書き込みは「メモリ上の global 全体 + 自分の変更」でファイル全体を置き換える(`:938-941`)。
+  `storage-json` の single レイアウトはファイル全体を atomic に置き換える
+  (`$PK/dsh-storage-json/lib/types/atomic.d.ts:1-11`)。プロセス間の直列化は無いので**ロスト更新**になる。
+- この部分は cache-sentinel では防げない。README の Limitations に書いて利用者に委ねるのが #9 で選んだ方針。
