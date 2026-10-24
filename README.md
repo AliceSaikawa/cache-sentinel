@@ -86,6 +86,8 @@ You can check the current status and switch modes from the chat input box.
     - Unlocked: "Next send allowed (uncached input rates will apply). M min left"
     - If the button cannot run `/unlock`, the reason appears under the warning. Send `/unlock` from the input box instead.
   - **M3E (`dsh-webui-m3e`)**: The conversation line when blocked is displayed, but because M3E does not load client bundles from other plugins, displaying the pre-send banner requires support on the M3E side.
+- **Combining with other plugins (such as rdsh-ui-comfort)**:
+  - When a plugin that turns the first Enter into a newline (`rdsh-ui-comfort` and similar) is enabled, the first Enter does not send: it only inserts a newline. That is how the plugin handles the keystroke, and cache-sentinel is not blocking the input. Pressing Enter again shortly after (within 1.5 s by default in rdsh-ui-comfort) sends, and if the session has expired at that point the send is stopped on the server side and a block notice appears in the conversation. An Enter pressed after a longer pause only inserts another newline.
 - **Status API**:
   - `GET /api/cache-sentinel.status?sessionId=<id>` (with Connection authentication) returns the session status JSON.
 
