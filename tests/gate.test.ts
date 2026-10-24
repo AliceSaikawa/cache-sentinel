@@ -1,19 +1,20 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { decideGate, isGrantValid } from '../src/gate.ts'
+import { classifyStep, decideGate, isGrantValid } from '../src/gate.ts'
 
 const MINUTE = 60000
 const NOW = 1_700_000_000_000
 
-/** 失効中(経過 > idleMinutes)の入力を作る補助。 */
-function expiredInput(overrides: Partial<Parameters<typeof decideGate>[0]> = {}) {
+/** 失効中(経過 > idleMinutes)のユーザーの送信の入力を作る補助。 */
+function expiredInput(overrides: Partial<Parameters<typeof decideGate>[0]> = {}): Parameters<typeof decideGate>[0] {
   return {
     now: NOW,
     lastResponseAt: NOW - 90 * MINUTE,
     idleMinutes: 60,
     grantedAt: undefined,
     unlockTtlMinutes: 10,
+    stepKind: 'user-send',
     ...overrides,
   }
 }
@@ -26,6 +27,7 @@ test('応答がまだ無い(新規セッション)は pass/no-response', () => {
       idleMinutes: 60,
       grantedAt: undefined,
       unlockTtlMinutes: 10,
+      stepKind: 'user-send',
     }),
     { kind: 'pass', reason: 'no-response' },
   )
@@ -39,6 +41,7 @@ test('新規セッションは許可の有無に関わらず pass/no-response', 
       idleMinutes: 60,
       grantedAt: NOW - MINUTE,
       unlockTtlMinutes: 10,
+      stepKind: 'user-send',
     }),
     { kind: 'pass', reason: 'no-response' },
   )
@@ -104,6 +107,7 @@ test('B5: 許可後に応答があったら無効(失効中は block、失効前
       idleMinutes: 60,
       grantedAt: NOW - 10 * MINUTE,
       unlockTtlMinutes: 10,
+      stepKind: 'user-send',
     }),
     { kind: 'pass', reason: 'fresh' },
   )
@@ -124,9 +128,68 @@ test('許可が TTL ちょうどで応答も許可前なら有効(unlocked)', ()
       idleMinutes: 60,
       grantedAt: NOW - 10 * MINUTE,
       unlockTtlMinutes: 10,
+      stepKind: 'user-send',
     }),
     { kind: 'pass', reason: 'unlocked' },
   )
+})
+
+test('#7: ターン途中のステップは失効していても pass/mid-turn(許可があっても同じ)', () => {
+  assert.deepEqual(decideGate(expiredInput({ stepKind: 'mid-turn' })), { kind: 'pass', reason: 'mid-turn' })
+  assert.deepEqual(
+    decideGate(expiredInput({ stepKind: 'mid-turn', grantedAt: NOW - MINUTE })),
+    { kind: 'pass', reason: 'mid-turn' },
+  )
+})
+
+test('#7: ユーザーの送信を含まない最初のステップは失効していても pass/other-input', () => {
+  assert.deepEqual(decideGate(expiredInput({ stepKind: 'other-input' })), { kind: 'pass', reason: 'other-input' })
+})
+
+test('#7: 失効していなければステップの種類に関わらず pass/fresh、新規セッションは pass/no-response', () => {
+  for (const stepKind of ['user-send', 'mid-turn', 'other-input'] as const) {
+    assert.deepEqual(
+      decideGate(expiredInput({ stepKind, lastResponseAt: NOW - 59 * MINUTE })),
+      { kind: 'pass', reason: 'fresh' },
+      stepKind,
+    )
+    assert.deepEqual(
+      decideGate(expiredInput({ stepKind, lastResponseAt: undefined })),
+      { kind: 'pass', reason: 'no-response' },
+      stepKind,
+    )
+  }
+})
+
+test('classifyStep: 2 ステップ目以降は入力の出どころに関わらず mid-turn', () => {
+  assert.equal(classifyStep(2, []), 'mid-turn')
+  assert.equal(classifyStep(2, ['user']), 'mid-turn')
+  assert.equal(classifyStep(15, ['tool-jobs']), 'mid-turn')
+})
+
+test('classifyStep: 最初のステップは user を含めば user-send', () => {
+  assert.equal(classifyStep(1, ['user']), 'user-send')
+  // ユーザーの送信と同じステップに他の入力が入っていても止める対象。
+  assert.equal(classifyStep(1, ['tool-jobs', 'user']), 'user-send')
+  assert.equal(classifyStep(1, ['user', 'skill-invocation']), 'user-send')
+})
+
+test('classifyStep: 最初のステップで user を含まなければ other-input', () => {
+  const cases: ReadonlyArray<readonly string[]> = [
+    [],
+    ['tool-jobs'],
+    ['subagent-settled'],
+    ['agent-message'],
+    ['goal'],
+    ['schedule'],
+    ['webhook'],
+    ['team-message'],
+    ['user-question-reply'],
+    ['time-context'],
+  ]
+  for (const kinds of cases) {
+    assert.equal(classifyStep(1, kinds), 'other-input', kinds.join(','))
+  }
 })
 
 test('decideGate は入力を変更しない', () => {

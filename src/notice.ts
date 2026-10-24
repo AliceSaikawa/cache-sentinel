@@ -1,7 +1,6 @@
 /**
  * ブロックの会話表示 (spec-ui v0.5 §D) の純粋部品。
- * 拒否したステップへ入る予定だった入力から、会話に出す文面 (`buildBlockNotice`) と、
- * 入力 0 件の連続拒否を間引く `NoticeThrottle` を提供する。
+ * 拒否したステップへ入る予定だった入力から、会話に出す文面 (`buildBlockNotice`) を作る。
  * 副作用 (session.append) は呼び出し側が持つ。
  * 文面は書き込み時点の表示言語 (spec-ui v0.5 §F) で作る。
  */
@@ -77,36 +76,4 @@ export function buildBlockNotice(
     lines.push(m.noticeAttachments(attachments))
   }
   return lines.join('\n')
-}
-
-/**
- * 連続通知の抑制 (spec-ui v0.5 §D)。
- * 入力メッセージが 0 件の拒否は、同じセッションで直近 intervalMs 以内に通知していれば省く。
- * 入力メッセージがある (hasMessages) ときは毎回通知し、記録時刻を now に更新する。
- */
-export class NoticeThrottle {
-  /** セッション id → 最後に通知した時刻。 */
-  private readonly lastNotified = new Map<string, number>()
-
-  private readonly intervalMs: number
-
-  /** @param intervalMs - 入力 0 件の拒否を再通知するまでの最短間隔 (ミリ秒)。 */
-  constructor(intervalMs: number) {
-    this.intervalMs = intervalMs
-  }
-
-  /**
-   * 今回通知すべきかを返す。
-   * - hasMessages が真なら常に true を返し、記録時刻を now に更新する。
-   * - 偽なら、最後の通知から intervalMs 未満なら false、そうでなければ true を返して記録を now に更新する。
-   * - 未通知のセッションは true。
-   */
-  shouldNotify(sessionId: string, now: number, hasMessages: boolean): boolean {
-    const last = this.lastNotified.get(sessionId)
-    if (!hasMessages && last !== undefined && now - last < this.intervalMs) {
-      return false
-    }
-    this.lastNotified.set(sessionId, now)
-    return true
-  }
 }

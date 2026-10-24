@@ -9,10 +9,11 @@ import {
   type PreStepDecision,
   type PreStepPayload,
   type SessionLike,
+  type StepMessage,
 } from '../src/block.ts'
 import type { TimedEvent } from '../src/last-response.ts'
 import type { Logger } from '../src/log.ts'
-import { buildBlockNotice, type NoticeMessage } from '../src/notice.ts'
+import { buildBlockNotice } from '../src/notice.ts'
 
 const MINUTE = 60_000
 const NOW = 1_700_000_000_000
@@ -39,8 +40,14 @@ function agentOf(session: SessionLike): AgentLike {
   return { session }
 }
 
+/** テキスト 1 件だけの入力。既定はユーザーの送信。 */
+function textMessage(text: string, kind = 'user'): StepMessage {
+  return { content: [{ type: 'text', text }], source: { kind } }
+}
+
+/** ユーザーの送信で始まるターンの最初のステップ(止める対象)。 */
 function payload(session: SessionLike, turn = 1, step = 1): PreStepPayload {
-  return { agent: agentOf(session), turn, step }
+  return { agent: agentOf(session), messages: [textMessage('入力')], turn, step }
 }
 
 /** 呼ばれた回数を数え、与えられた decision をそのまま返す next。 */
@@ -330,11 +337,6 @@ interface CommandDoneData {
   text: string
 }
 
-/** テキスト 1 件だけの入力。 */
-function textMessage(text: string): NoticeMessage {
-  return { content: [{ type: 'text', text }] }
-}
-
 /** 記録した append の i 番目を取り出す。 */
 function appendAt(appends: ReadonlyArray<{ type: string; data: unknown }>, index: number) {
   const entry = appends[index]
@@ -346,7 +348,7 @@ test('D-append1: ブロックすると command/run → command/done を追加し
   const log = makeLogger()
   const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
   const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
-  const messages: NoticeMessage[] = [textMessage('捨てられる入力')]
+  const messages: StepMessage[] = [textMessage('捨てられる入力')]
   const pass = nextSpy()
 
   const result = await sentinel.onPreStep({ ...payload(session), messages }, pass.next)
@@ -374,7 +376,7 @@ test('D-append2: 2 回目のブロックでは commandId が変わる', async ()
   const clock = { now: NOW }
   const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
   const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
-  const messages: NoticeMessage[] = [textMessage('入力')]
+  const messages: StepMessage[] = [textMessage('入力')]
 
   await sentinel.onPreStep({ ...payload(session), messages }, nextSpy().next)
   clock.now = NOW + MINUTE
@@ -413,29 +415,11 @@ test('D-append4: Session に append が無くても reject する', async () => 
   assert.equal(pass.calls(), 0)
 })
 
-test('D-append5: 入力 0 件のブロックは 10 分以内なら 1 回分だけ追加し、10 分後は再び追加する', async () => {
-  const log = makeLogger()
-  const clock = { now: NOW }
-  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
-  const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => clock.now)
-
-  await sentinel.onPreStep(payload(session), nextSpy().next)
-  assert.equal(appends.length, 2)
-
-  clock.now = NOW + 9 * MINUTE
-  await sentinel.onPreStep(payload(session), nextSpy().next)
-  assert.equal(appends.length, 2)
-
-  clock.now = NOW + 10 * MINUTE
-  await sentinel.onPreStep(payload(session), nextSpy().next)
-  assert.equal(appends.length, 4)
-})
-
-test('D-append6: 入力があれば 10 分以内でも毎回追加する', async () => {
+test('D-append6: ブロックするたびに毎回追加する', async () => {
   const log = makeLogger()
   const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
   const sentinel = createSentinel({ ...CONFIG }, log.log, 'ja', () => NOW)
-  const messages: NoticeMessage[] = [textMessage('入力')]
+  const messages: StepMessage[] = [textMessage('入力')]
 
   for (let i = 0; i < 3; i++) {
     await sentinel.onPreStep({ ...payload(session), messages }, nextSpy().next)
@@ -532,7 +516,7 @@ test('D-locale: ブロック通知は createSentinel に渡した言語で書く
   const log = makeLogger()
   const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
   const sentinel = createSentinel({ ...CONFIG }, log.log, 'en', () => NOW)
-  const messages: NoticeMessage[] = [textMessage('draft')]
+  const messages: StepMessage[] = [textMessage('draft')]
 
   await sentinel.onPreStep({ ...payload(session), messages }, nextSpy().next)
 
@@ -547,4 +531,101 @@ test('D-locale: /unlock の文面も createSentinel に渡した言語で書く'
   const sentinel = createSentinel({ ...CONFIG }, log.log, 'zh-CN', () => NOW)
 
   assert.equal(textOf(sentinel.unlock(agentOf(session), INACTIVE_TEXT)), '本会话尚无模型响应')
+})
+
+// --- #7: 止めるステップの種類 (spec §3) ---
+
+/** 失効したセッション(最終応答から 61 分)に、指定したステップを 1 回送る。 */
+async function preStepOnExpired(
+  step: { turn?: number; step: number; messages: readonly StepMessage[] },
+  config: Partial<BlockSettings> = {},
+) {
+  const log = makeLogger()
+  const { session, appends } = appendingSessionWith('s1', () => [{ type: 'step/end', time: NOW - 61 * MINUTE }])
+  const sentinel = createSentinel({ ...CONFIG, ...config }, log.log, 'ja', () => NOW)
+  const pass = nextSpy()
+  const result = await sentinel.onPreStep(
+    { agent: agentOf(session), turn: step.turn ?? 3, step: step.step, messages: step.messages },
+    pass.next,
+  )
+  return { result, pass, appends, log }
+}
+
+test('B10: ターンの 2 ステップ目以降は、直前の step/end から失効していても通し、通知しない', async () => {
+  const cases: ReadonlyArray<{ label: string; messages: readonly StepMessage[] }> = [
+    { label: '入力 0 件', messages: [] },
+    { label: 'ジョブ完了の inject', messages: [textMessage('job done', 'tool-jobs')] },
+    { label: 'ユーザーの steer', messages: [textMessage('割り込み')] },
+  ]
+  for (const { label, messages } of cases) {
+    const { result, pass, appends, log } = await preStepOnExpired({ step: 2, messages })
+
+    assert.equal(result, pass.decision, label)
+    assert.equal(pass.calls(), 1, label)
+    assert.equal(appends.length, 0, label)
+    assert.deepEqual(log.info, ['失効していますがターンの途中なので通しました: s1 (turn 3 step 2)'], label)
+  }
+})
+
+test('B11: ユーザーの送信を含まない最初のステップ(ジョブ・サブエージェント・ゴール・リマインダー)は失効していても通す', async () => {
+  const kinds = ['tool-jobs', 'subagent-settled', 'agent-message', 'goal', 'schedule'] as const
+  for (const kind of kinds) {
+    const { result, pass, appends, log } = await preStepOnExpired({ step: 1, messages: [textMessage('自動の入力', kind)] })
+
+    assert.equal(result, pass.decision, kind)
+    assert.equal(pass.calls(), 1, kind)
+    assert.equal(appends.length, 0, kind)
+    assert.deepEqual(
+      log.info,
+      [`失効していますがユーザーの送信ではないので通しました: s1 (turn 3 step 1, 入力: ${kind})`],
+      kind,
+    )
+  }
+})
+
+test('B11: 最初のステップで入力が 0 件でも通す', async () => {
+  const { result, pass, log } = await preStepOnExpired({ step: 1, messages: [] })
+
+  assert.equal(result, pass.decision)
+  assert.equal(pass.calls(), 1)
+  assert.deepEqual(log.info, ['失効していますがユーザーの送信ではないので通しました: s1 (turn 3 step 1, 入力: なし)'])
+})
+
+test('B12: 最初のステップにユーザーの送信と他の入力が混ざっていれば止め、両方を破棄された入力として表示する', async () => {
+  const messages = [textMessage('job done', 'tool-jobs'), textMessage('続けて')]
+  const { result, pass, appends } = await preStepOnExpired({ step: 1, messages })
+
+  assert.deepEqual(result, { kind: 'reject' })
+  assert.equal(pass.calls(), 0)
+  const done = appendAt(appends, 1).data as CommandDoneData
+  assert.equal(done.text, buildBlockNotice({ idleMinutes: 61, messages }, 'ja'))
+  assert.match(done.text, /job done\n\n続けて$/)
+})
+
+test('#7: source の無いメッセージがあっても、同じステップのユーザーの送信は止める', async () => {
+  const noSource: StepMessage = { content: [{ type: 'text', text: '出どころ不明' }] }
+  const { result, pass, log } = await preStepOnExpired({ step: 1, messages: [noSource, textMessage('続けて')] })
+
+  assert.deepEqual(result, { kind: 'reject' })
+  assert.equal(pass.calls(), 0)
+  assert.deepEqual(log.warn, [])
+})
+
+test('#7: source の無いメッセージだけの最初のステップは、ユーザーの送信ではないので通す', async () => {
+  const noSource: StepMessage = { content: [{ type: 'text', text: '出どころ不明' }] }
+  const { result, pass, log } = await preStepOnExpired({ step: 1, messages: [noSource] })
+
+  assert.equal(result, pass.decision)
+  assert.equal(pass.calls(), 1)
+  assert.deepEqual(log.warn, [])
+  assert.deepEqual(log.info, [
+    '失効していますがユーザーの送信ではないので通しました: s1 (turn 3 step 1, 入力: (source なし))',
+  ])
+})
+
+test('B7: dryRun でも、止める対象でないステップに「ブロック対象」のログは出さない', async () => {
+  const { result, pass, log } = await preStepOnExpired({ step: 2, messages: [] }, { dryRun: true })
+
+  assert.equal(result, pass.decision)
+  assert.ok(!log.info.some((m) => m.includes('dryRun')), log.info.join('\n'))
 })

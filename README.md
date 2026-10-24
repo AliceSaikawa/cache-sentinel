@@ -10,7 +10,7 @@ If you send a follow-up message to a session where some time has passed since th
 
 For sessions where the prompt cache lifetime has passed, this plugin prevents accidental sends in two ways:
 
-- **Input blocking (`block`)**: Keeps the session open and readable while stopping only sends that call the model. When you want to continue sending, you can allow just the next send using the button above the input box or the `/unlock` command.
+- **Input blocking (`block`)**: Keeps the session open and readable while stopping the messages you send to the model. Work the agent is already doing (tool runs, jobs, subagents, goals, reminders) keeps going. When you want to continue sending, you can allow just the next send using the button above the input box or the `/unlock` command.
 - **Auto-archiving (`archive`)**: Automatically archives sessions that have not been updated for a while, hiding them from the sidebar so they cannot be opened.
 
 You can switch at any time from the chat `/sentinel` command to `both` mode, which combines both (input blocking after 60 minutes, archiving after 24 hours), or `off` mode, which temporarily disables the feature. (In the official Web UI, `/sentinel` with an argument currently cannot be run from the input box: [#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36).)
@@ -55,7 +55,7 @@ You can switch at any time from the chat `/sentinel` command to `both` mode, whi
 
 | Mode | Behavior |
 |---|---|
-| `block` (default) | Blocks input once `idleMinutes` (default: 60 minutes) have passed since the last response (viewing is still allowed). `/unlock` allows the next single send |
+| `block` (default) | Blocks your sends once `idleMinutes` (default: 60 minutes) have passed since the last response (viewing is still allowed). Work the agent is already doing is not stopped. `/unlock` allows the next single send |
 | `archive` | Automatically archives the session once `idleMinutes` (default: 60 minutes) have passed since the last update (hidden from the sidebar and cannot be opened) |
 | `both` | Blocks input `idleMinutes` (default: 60 minutes) after the last response, and automatically archives `archiveAfterMinutes` (default: 1440 minutes = 24 hours) after the last update |
 | `off` | Neither blocks input nor archives sessions (`/sentinel` and `/unlock` commands remain available) |
@@ -65,7 +65,7 @@ You can switch at any time from the chat `/sentinel` command to `both` mode, whi
 You can check the current status and switch modes from the chat input box.
 
 - `/sentinel`: Shows the current effective mode and its source (set via `/sentinel` / set in YAML), thresholds, elapsed minutes since the last response in this session, and `dryRun` status.
-- `/sentinel block` | `archive` | `both` | `off`: Switches the effective mode. It is saved to `$DSH_HOME/cache-sentinel/state.json` and preserved across DSH restarts (takes precedence over `mode` in YAML).
+- `/sentinel block` | `archive` | `both` | `off`: Switches the effective mode. It is saved to `$DSH_HOME/cache-sentinel/profiles/<profile>/state.json` (per profile) and preserved across DSH restarts (takes precedence over `mode` in YAML).
 - `/sentinel default`: Clears the mode saved via `/sentinel` and reverts to the `mode` setting in YAML.
 - Note: in the official Web UI, `/sentinel` with an argument (`block`, `archive`, `both`, `off`, `default`) currently cannot be run from the input box. It is sent as a normal message instead ([#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)). `/sentinel` without an argument and `/unlock` work. Until this is fixed, switch modes with `mode` in YAML.
 
@@ -80,12 +80,14 @@ You can check the current status and switch modes from the chat input box.
 - **Display language**: Text follows your environment. The Host resolves it from `LC_ALL`, `LC_MESSAGES`, `LANG`, and the system locale, in that order; the official Web UI resolves it from the browser language (`navigator.languages`). English, Japanese, and Simplified Chinese are supported, and unsupported languages fall back to English. Log output (lines prefixed with `[cache-sentinel]`) stays in Japanese.
 - **When a send is blocked (both the official Web UI and M3E)**:
   - The conversation displays "Send blocked (N minutes since the last response, as the cache has likely expired)." and "You can allow the next single send with /unlock.", along with the discarded input text (up to 2000 characters per message), as a command result line.
-  - When steps with 0 input messages (such as automatic continuation) are rejected consecutively, notifications are throttled to at most once every 10 minutes per session.
 - **Pre-send banner display**:
   - **Official Web UI**: The client plugin (`lib/client.js`) displays a status banner above the input box (`conversation.input.dock`).
     - Expired: "Cache expired (N minutes since the last response). Sending now will be blocked." and the "Allow the next single send (/unlock)" button
     - Unlocked: "Next send allowed (uncached input rates will apply). M min left"
+    - If the button cannot run `/unlock`, the reason appears under the warning. Send `/unlock` from the input box instead.
   - **M3E (`dsh-webui-m3e`)**: The conversation line when blocked is displayed, but because M3E does not load client bundles from other plugins, displaying the pre-send banner requires support on the M3E side.
+- **Combining with other plugins (such as rdsh-ui-comfort)**:
+  - When a plugin that turns the first Enter into a newline (`rdsh-ui-comfort` and similar) is enabled, the first Enter does not send: it only inserts a newline. That is how the plugin handles the keystroke, and cache-sentinel is not blocking the input. Pressing Enter again shortly after (within 1.5 s by default in rdsh-ui-comfort) sends, and if the session has expired at that point the send is stopped on the server side and a block notice appears in the conversation. An Enter pressed after a longer pause only inserts another newline.
 - **Status API**:
   - `GET /api/cache-sentinel.status?sessionId=<id>` (with Connection authentication) returns the session status JSON.
 
@@ -105,7 +107,7 @@ You can change the settings in your profile's `cordis.patch.yml`. Omitted keys u
     archiveExisting: false    # also archive sessions that have been idle since before archiving was first enabled
     maxPerCycle: 20           # maximum sessions to archive per cycle
     dryRun: false             # when true, neither block nor archive, only log
-    # stateFile: /path/to/state.json # path to persistent state file (default: $DSH_HOME/cache-sentinel/state.json)
+    # stateFile: /path/to/state.json # path to persistent state file (default: $DSH_HOME/cache-sentinel/profiles/<profile>/state.json)
 ```
 
 - Changes to `cordis.patch.yml` take effect without restarting DSH (the plugin is re-applied with the new settings, and in-memory `/unlock` permissions are cleared).
@@ -115,8 +117,12 @@ You can change the settings in your profile's `cordis.patch.yml`. Omitted keys u
 
 ### Input Blocking (`block` / `both` Mode)
 
-- Evaluates before a step starts at the head of the `agent/pre-step` hook (`prepend: true`). Because it runs before automatic compaction (`dsh-compaction-basic`), model calls for automatic compaction do not occur in expired sessions either.
-- Blocks steps regardless of where the message came from: user sends, reminders, automatic goal continuation, background job completion notifications, subagent continuation, and next steps after long tool executions are all covered.
+- Evaluates before a step starts at the head of the `agent/pre-step` hook (`prepend: true`). Because it runs before automatic compaction (`dsh-compaction-basic`), a blocked step does not trigger a model call for automatic compaction either.
+- Only the first step of a turn that contains your send (a message whose `source.kind` is `user`) is blocked. The following steps pass even after the cache has expired, and may be sent without the cache:
+  - Later steps of the same turn, such as a job completion notification or a steer you send while the turn is running. The step after a tool run also belongs here, but it is normally not judged expired at all: the last response time is refreshed by the `step/end` written when the tool finishes (see [Limitations](#limitations)).
+  - Turns that start without your send: background job completion notifications, messages and completion notices from subagents, automatic goal continuation, reminders, and webhooks (webhooks exist only in DSH 0.2.0-rc.2).
+- When an expired step passes for one of these reasons, the reason is written to the log (see [Viewing Logs](#viewing-logs)).
+- If your send enters the same step as other input (for example, a job completion notification that was waiting), the whole step is blocked and that input is discarded too.
 - Elapsed time is calculated from the timestamp of the session's last `step/end` event (including history inherited from a fork). New sessions with no model response yet, or sessions whose elapsed time is within `idleMinutes` minutes (inclusive), are allowed through.
 - When a step is rejected, no API request is made and no charges are incurred. **The outgoing message that was about to enter that step is discarded**, so please type it again after unlocking (the discarded text is shown in the block notice inside the conversation).
 
@@ -130,8 +136,14 @@ You can change the settings in your profile's `cordis.patch.yml`. Omitted keys u
 
 ## Limitations
 
+- **Running several profiles at the same time**: `state.json` is stored per profile (`$DSH_HOME/cache-sentinel/profiles/<profile>/state.json`), so modes, `baselineAt`, and unarchiving records do not overwrite each other. When you upgrade from an earlier version, each profile copies the old `$DSH_HOME/cache-sentinel/state.json` on its first start (the old file is kept and not read again). Where the profile name is not available, the old file is used. The archive state, however, lives in DSH's shared `$DSH_HOME/storages/workspace.json` and cannot be split by a plugin: DSH reads it once at startup, never reloads it, and every write replaces the whole file. If two profiles run at the same time, archiving / unarchiving / pinning in one can therefore be lost by a write from the other. **If you use `archive` or `both`, enable it in only one profile at a time.**
 - Because M3E does not load client bundles from other plugins, displaying the pre-send banner requires support on the M3E side (the in-conversation notice when blocked is displayed by the Host side alone).
-- In subagent sessions, `/unlock` cannot be executed from the GUI.
+- In subagent sessions, `/unlock` cannot be executed from the GUI. Messages from the parent agent are not blocked, but a message you send directly to a subagent from the GUI is blocked if the subagent's cache has expired.
+- Input that comes from your action but is not a plain send is not blocked:
+  - Creating a goal with `/goal <objective>`, editing it with `/goal edit`, or resuming it. The goal runs even after the cache has expired.
+  - `/goal` with attachments. The attachments enter first as a plain send, so they are blocked and discarded, and the goal runs without them (behavior read from the code; not verified on a running DSH).
+  - Answering a question (`ask_user_question`) after the cache has expired. Blocking it would discard the answer. The question goes back to waiting for an answer, but having already answered, you are unlikely to notice that you need to answer again.
+- A step that follows a tool run longer than `idleMinutes` is sent without the cache, but the plugin does not detect it (nothing is logged). The last response time is refreshed by the `step/end` written when the tool finishes.
 - Automatic title generation (`session-title-first-prompt-llm`) calls the model independently on the first send and is outside the gate (only on the first send in new sessions or forks, and only the first message is sent).
 - The actual prompt cache lifetime depends on the provider and request contents. This plugin is an approximation based solely on elapsed time.
 
@@ -143,7 +155,7 @@ After re-adding a new version with `dsh plugin --profile web add ...`, **restart
 
 ### Viewing Logs
 
-Startup, blocks, `/unlock` grants, mode changes, and archiving are output with a `[cache-sentinel]` prefix to stdout / stderr and the DSH logger.
+Startup, blocks, expired steps that were let through, `/unlock` grants, mode changes, and archiving are output with a `[cache-sentinel]` prefix to stdout / stderr and the DSH logger.
 
 Example for checking logs when running DSH as a systemd user service (`deepseek-harness`):
 

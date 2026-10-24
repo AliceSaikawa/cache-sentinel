@@ -398,6 +398,13 @@ K3 のとおり公式の前例が無く、`engines.dsh` を書くと peer を書
 - あわせて、`remote.commands.execute` の戻り値は union(`{ok: false, error} | {ok: true, value}`)で、
   公式は `if (!result.ok) throw` で扱う(`$PK/dsh-client-ui-commands/lib/client.js:1068-1069`)。
   戻り値を捨てると実行失敗が無言になる。
+- 型(#26 の修正時に確認): `execute(agentId, line, attachments, signal?): Promise<RemoteResult<object | undefined>>`
+  (`$PK/dsh-api-session-controller/lib/types/client/sessions/remotes.d.ts:14-16`)。`RemoteResult` は
+  `{ ok: true, value } | { ok: false, error: RemoteFailure }`(`$PK/dsh-typert-protocol/lib/types/types.d.ts:67-73`)。
+  `value === undefined` はコマンドが見つからない(公式は「unknown or malformed command」を返す:
+  `$PK/dsh-client-ui-commands/lib/client.js:1070-1073`)。`error` の `code`・`message` は同じ箇所の使い方による。
+  DSH 自身の Session クライアントも `inject` に `'remote'` と `'remote.commands'` を並べている
+  (`$PK/dsh-api-session-controller/lib/types/client/index.js:10-18`)。
 
 ---
 
@@ -422,3 +429,167 @@ headless などでは起動しない(README「Supported Versions and Environment
   `$PK/dsh-web-app/README.md:80` の「Desktop compositions using this bundle」。実機では未確認(#16)。
 - npm 版 CLI は `desktop` のプラグイン管理を拒否し、Desktop に同梱の `dsh` コマンドで管理する
   (`dsh/README.md:20`)。
+
+---
+
+# 止める対象の判定材料の調査 (2026-10-18, DSH 0.2.0-rc.2) — #7
+
+結論: `agent/pre-step` の payload だけで「ユーザーの送信で始まるターンの最初のステップ」を判定できる。
+ターン内の位置は `step`(ターンごとに 1 から数える)、入力の出どころは `messages[].source.kind` で分かる。
+spec.md §3 の `classifyStep` はこれに基づく。`$PK` は rc.2 の `node_modules/@deepseek-ai`。実機での確認はしていない。
+
+## P1: ターン内の位置 — `step`
+- payload は `{ agent, messages, turn, step, signal }`(`$PK/dsh-agent/lib/types/runtime-types.d.ts:304-310`)。
+- `turn()` は `step = phase.step + 1` で提案し(`$PK/dsh-agent-loop/lib/index.js:953`)、`phase.step` は
+  ドライバの開始時(`:865`)とターンの終わり(`:1038`)に 0 に戻る。そのためターンの最初のステップは常に `step === 1`。
+- 最初のステップは `target = "next-turn"` で、`next-step` の入力すべてと `next-turn` の先頭 1 件を claim する
+  (`:949`, `:103-111`)。2 ステップ目以降は `next-step` だけ(`:1006`)。アイドル中の steer も最初のステップに入る。
+- ツールの結果は Session のイベントで、`messages` には入らない。ツール実行中の context は `next-step` に足される(`:1154`)。
+  長いツール実行の後の続きは `step >= 2` で、`messages` は空か、inject された context だけ。
+  ただし直前の `step/end` がツールの後に書かれるので、このステップは通常失効と判定されない(P3)。
+- `messages` は受信箱から claim した入力だけ。runtime context(時刻など)は既定の `next()` が後から足す(`:911-918`)。
+
+## P2: 入力の出どころ — `source.kind`
+- `UserMessage` は `source: MessageSource` を必ず持つ(`$PK/dsh-llm/lib/types/message.d.ts:125-133,144-146`)。
+  `MessageSource` は `MessageSourceMap` の値の union で、各プラグインが拡張する(同 `:101-122`)。
+- 出どころごとの `kind` と入り方:
+  | 入力 | `kind` | 入り方 | 根拠 |
+  |---|---|---|---|
+  | GUI(公式・M3E)からの送信 | `user`(`rpcId` 付き) | `followup` / `steer` | `$PK/dsh-api-session-controller/lib/index.js:856-860,882-883`、`types/types.d.ts:376-382` |
+  | スキルの明示呼び出し | 本文は `user`(スキル本文の `skill-invocation` は cache-sentinel には見えない。下記) | | `$PK/dsh-skill/lib/types/index.d.ts:114-127` |
+  | ジョブ完了通知 | `tool-jobs` | アイドルなら `followup`、実行中は `inject` | `$PK/dsh-tool-jobs/lib/index.js:272-295` |
+  | リマインダー | `schedule` | `followup` | `$PK/dsh-schedule/lib/index.js:1585-1596` |
+  | ゴールの自動継続、`/goal` の作成・編集・再開の後のラウンド | `goal` | `followup` | `$PK/dsh-goal-round-driver/lib/index.js:134-154` |
+  | `/goal` の添付 | `user` | `followup`(ゴールのラウンドより先) | 0.2.1-rc.2 の `dsh-command-goal/lib/index.js:98-106` |
+  | 親からサブエージェントへの継続 | `agent-message` | | `$PK/dsh-subagent/lib/index.js:1970-1973`、`types/continuation-messages.d.ts:11-18` |
+  | サブエージェントから親へのメッセージ | `agent-message` | | 同 `index.js:1857-1864` |
+  | サブエージェントの完了通知(親へ) | `subagent-settled` | | 同 `types/continuation-messages.d.ts:19-33` |
+  | サブエージェントの最初の課題 | `user` | `queue` | `$PK/dsh-subagent/lib/index.js:1738-1742` |
+  | GUI からサブエージェントへの直接の送信 | `user`(`rpcId` 付き) | | 同 `:3017-3021` |
+  | 質問への遅い回答 | `user-question-reply` | `steer` | `$PK/dsh-user-questions/lib/index.js:257,582` |
+  | webhook(0.2.0-rc.2 のみ。0.2.1-rc.2 にはパッケージが無い) | `webhook` | `followup` | `$PK/dsh-webhook/lib/index.js:184-190` |
+  | チームのメッセージ | 0.2.0-rc.2 は `team-message`、0.2.1-rc.2 は `agent-message` | `steer` | `$PK/dsh-experimental-agent-team/lib/index.js:914,926`、0.2.1-rc.2 は同 `:1598-1609` |
+- スキル本文(`skill-invocation`)は、dsh-tool-skill の pre-step リスナーが `next()` の後で decision の `messages` に足す
+  (0.2.1-rc.2 の `dsh-tool-skill/lib/index.js:896-929`)。最も外側の cache-sentinel が見る `messages` には入らない。
+  ユーザーの本文(`user`)で判定が決まるので、結果は変わらない。
+- `/goal` に添付があると、`dsh-command-goal` はゴールを作ってから添付を kind `user` の別メッセージとして `followup` する
+  (0.2.1-rc.2 の `dsh-command-goal/lib/index.js:98-106,126-144`)。ラウンドの driver は、受信箱の `next-turn` に
+  他の入力があるか、エージェントが実行中なら次のラウンドを入れない(`dsh-goal-round-driver/lib/index.js:84-86,249-255`)。
+  そのため添付のターンが先に走り、失効していれば止められて添付は破棄される。エージェントが idle に戻ると
+  ラウンド(`goal`)が入り(`:223-242`)、こちらは通る。結果として添付なしでゴールが走る。コードを読んだ結果で、実機は未確認。
+- 質問への遅い回答は `user-question-reply` の `steer`(0.2.1-rc.2 の `dsh-user-questions/lib/index.js:561-583`)。
+  破棄されても質問は回答待ちのまま残る(`:511-514` は予約を解放するだけで、質問が閉じるのは `user/message` を
+  受けたとき `:255-262`。`dsh-user-questions/README.md` の Role 節「A discarded reply leaves the question answerable.」)。
+- サブエージェントの最初の課題は `user` だが、新しいセッション(`step/end` が無い)か、親の履歴を引き継ぐフォーク
+  (親は実行中なので最終応答が新しい)なので、失効の判定で通る。
+- `MessageSource` は「`kind` で分岐し、未知の `kind` は素通しする」使い方を想定している(`message.d.ts:121` のコメント)。
+  cache-sentinel も `user` だけを見て、それ以外(未知の `kind` を含む)を「ユーザーの送信ではない」とみなす。
+
+## P3: `step/end` はツール結果の後に追加される(2026-10-23, 0.2.1-rc.2)
+- `turn()` のループは、pre-step(`$PK/dsh-agent-loop/lib/index.js:956`)→ `step/start`(`:970`)→
+  `await this.step(decision)`(`:980`)→ finally で `step/end`(`:992-997`)の順。
+- `step()` はモデルの応答を書いた後、同じ呼び出しの中でツールを実行する(`executeToolCalls`、`:1166`)。
+  ツールの結果(`tool/result`)は `appendToolResult`(`:691-705`)で書かれ、すべて終わってから `step()` が返る。
+  そのため `step/end` の `time` はツールの実行が終わった時刻になる。
+- `step/end` から次の pre-step までの間にあるのは、ターンを閉じるときの `agent/turn-stopping`(`:1000-1006`。
+  受信箱が空のときだけ)と、pre-step 内の system prompt の組み立て(`:907`)だけ。どちらも通常は時間がかからない。
+- ローカルのセッションログ 1 件(2026-10-23 のもの)でも、各ステップの最後の `tool/result` と `step/end` は同じか 1ms 差、
+  次の `step/start` はその約 10ms 後だった。
+- 結論: 2 ステップ目以降の pre-step では、最終応答時刻(最後の `step/end`)は直前のステップの終わりで、通常は失効していない。
+  spec.md §3 の `mid-turn` は、`step/end` の間隔が開いたときの保険にとどまる。長いツール実行の後の続きが
+  キャッシュなしで送られても、cache-sentinel は検出しない(spec.md §8)。
+
+## 0.2.1-rc.2 での確認(2026-10-23)
+P1・P2 の挙動は 0.2.1-rc.2 でも同じ(`$PK` は 0.2.1-rc.2 の `node_modules/@deepseek-ai`)。行番号は次のとおり。
+- ステップの採番: `$PK/dsh-agent-loop/lib/index.js:951-956`(`step = phase.step + 1`)、0 に戻すのは `:865`・`:1040`。
+  claim は `:103-111`、runtime context は pre-step の既定の `next()` が足す(`:906-919`)。
+- `source.kind`: GUI からの送信 `user` は `$PK/dsh-api-session-controller/lib/index.js:3224-3229`(steer / followup は
+  `:949-950`)、ジョブ `tool-jobs` は `$PK/dsh-tool-jobs/lib/index.js:278-295`、リマインダー `schedule` は
+  `$PK/dsh-schedule/lib/index.js:1594-1596`、ゴール `goal` は `$PK/dsh-goal-round-driver/lib/index.js:147`、
+  サブエージェントは `$PK/dsh-subagent/lib/index.js:446`(`agent-message`)・`:534`(`subagent-settled`)・
+  `:1461`(最初の課題 `user`)・`:3196`(GUI からの直接の送信 `user`)。
+- 版の差: 0.2.1-rc.2 には `dsh-webhook` パッケージが無い。agent-team のメッセージは `agent-message`
+  (`$PK/dsh-experimental-agent-team/lib/index.js:1598-1609`)。どちらも `user` ではないので、分類の結果は変わらない。
+
+---
+
+# プロファイル名の取得 (2026-10-23) — #9 の state.json のプロファイル別分離の根拠
+
+`$PK` = `<DSH のインストール先>/node_modules/@deepseek-ai`(0.2.1-rc.2)。CLI 本体の `lib/` は `$PK/../../lib/`
+(`@deepseek-ai/dsh/lib/`)。旧版は `npm pack @deepseek-ai/<pkg>@<版>` で `~/AI/tmp/cs-issues/` に展開して読んだ
+(Z2 の表のパスはここからの相対)。実機の起動はしていない(型定義と実装の読解のみ)。コードからの推論である旨は各項に記す。
+
+## Z1: `ctx.get('profileContext')` でプロファイル名が取れる — 確定
+
+- 型: `$PK/dsh-app-boot/lib/types/profile-context.d.ts` の `ProfileContext` は
+  `readonly name: string` を持ち(interface は `:10-25`)、`declare module '@deepseek-ai/cordis'` で
+  `Context.profileContext` を宣言する(`:26-31`)。
+  doc は「Present only in a profile launched by dsh.」— つまり**無い環境がありうる**ので、
+  `ctx.get` は `undefined` を返しうる前提で扱う。
+- provide の実装: `$PK/../../lib/profile-boot-C14i-8IN.js`。`:290` で
+  `const profileContext = { name: options.profile, dir: …, home: resolveDshHome(), … }` を組み立て、
+  `boot()` のコールバックで `hostCtx.provide("profileContext", profileContext)` を呼び(`:304`)、
+  その後にプラグインを読み込む(`:306` の `hostCtx.plugin(PluginPackages, …)`)。
+  プラグインの `apply` より前に provide されるため、`apply()` の時点で読める。
+- 消費例(公式、いずれも `ctx.get("profileContext")` が `undefined` の場合を扱う):
+  - `$PK/dsh-shell-env/lib/index.js:90-94`(`profile.name` と `profile.dir` をシェル環境に載せる)
+  - `$PK/dsh-app-boot/lib/index.js:2313`(`preflight`。`if (profile === void 0) return …`)と
+    `:2399`(`prepareProfilePatches`。`if (ctx.get("profileContext") === void 0) return patches`)
+- **`inject` に足す必要は無い。** `inject` に無いサービスを `ctx.get` で読むのは公式プラグインと同じ使い方で、
+  inject に足すと `profileContext` を provide しないホスト(テスト・別アプリ)でプラグインが `PENDING` のまま起動しなくなる。
+  そのため `HostContext` に `get?` を足し、`ctx.get?.('profileContext')?.name` と optional に読む。
+- **未確認:** `web` プロファイルの実機で `ctx.get('profileContext')` が解決すること。型・provide の実装・
+  公式プラグインの消費例の 3 点から確実と見ているが、実機確認はしていない(タスク指示により実機確認は行わない)。
+  解決しなかった場合は「プロファイル名なし」の経路に落ちて従来どおり共有ファイルを使うだけで、壊れない。
+
+## Z2: 同じ口が 0.2.0-rc.2・0.2.1-rc.1 にもある — 確定
+
+対応範囲(`docs/spec.md`・README の「0.2.0-rc.2〜0.2.1-rc.1」)の両端で確認した。
+
+| 版 | 型 `profile-context.d.ts` | provide の実装 |
+|---|---|---|
+| 0.2.0-rc.2 | `pack-020/ab020/package/lib/types/profile-context.d.ts` | `cs9/cli-020/package/lib/profile-boot-BZ2ZjNWi.js:259-273`(`name: options.profile`、`:273` で provide) |
+| 0.2.1-rc.1 | `cs9/appboot-0.2.1-rc.1/lib/types/profile-context.d.ts`(rc.2 と diff なし) | `cs9/cli-rc1/package/lib/profile-boot-C14i-8IN.js:290-304`(rc.2 のファイルと diff なし) |
+| 0.2.1-rc.2(手元) | `$PK/dsh-app-boot/lib/types/profile-context.d.ts` | `$PK/../../lib/profile-boot-C14i-8IN.js:290-304` |
+
+- 型定義は 0.2.0-rc.2 と 0.2.1-rc.1 で `readBundlePatches` の宣言が増えただけ(`name` は両方にある)。
+- `profile-boot` は 0.2.1-rc.1 と 0.2.1-rc.2 で完全一致、0.2.0-rc.2 とは `initializeProfileFromDefault` の
+  実装だけが違い、`profileContext` の組み立てと provide は同じ。
+- `dsh-shell-env` の消費側も 0.2.1-rc.1 に同じ行がある(`cs9/shell-env-0.2.1-rc.1/lib/index.js:90`)。
+- **未確認:** 0.2.1-alpha.1〜alpha.5 の `dsh-app-boot`。README の対応範囲には含まれるが、
+  `profileContext` は 0.2.0-rc.2 から存在するので alpha 系でも同じと見ている(差分は未取得)。
+
+## Z3: プロファイル名の規則と state.json の置き場所 — 確定(Windows は推測)
+
+- `dsh-app-boot` の `resolveProfileDir` は、`""`、`/` か `\` を含む名前、`.`、`..`、`node_modules` を
+  `dsh: invalid profile name` として throw し、それ以外は `join(home, 'profiles', name)` を返す
+  (`$PK/dsh-app-boot/lib/index.js:546-549`、検査は `:547`、`PROFILES_DIR = "profiles"` は `:507`)。
+  同じ検査が 0.2.1-rc.1(`cs9/appboot-0.2.1-rc.1/lib/index.js:547`)と 0.2.0-rc.2
+  (`pack-020/ab020/package/lib/index.js:525`)にもある。
+- npm 版 CLI の起動では、provide する名前はこの検査を通っている: `$PK/../../lib/profile-boot-C14i-8IN.js:272` の
+  `composeProfile(options.profile, …)` → `:237` の `prepareProfile` → `:218` の `loadProfile` →
+  `$PK/dsh-app-boot/lib/index.js:1066` の `resolveProfileDir(name, home)`。`:290-291` の `name: options.profile` は同じ値。
+  ただし `:237` はアプリが渡す `resolvedProfile`(「application-owned profile」、`:233`)があると `prepareProfile` を
+  呼ばない。この経路を使うアプリ(Desktop など)が名前を検査するかは確認していない。
+- そのため cache-sentinel は、`profileNameOf` で同じ規則を検査し、外れた名前は「プロファイル名なし」として従来の
+  共有ファイルに落とす(念のための検査)。規則に合う名前は変換しない。変換すると `a b` と `a_b` のような
+  別プロファイルが同じファイルを共有し、#9 と同じ競合を新たに作るため。
+- 置き場所は `$DSH_HOME/cache-sentinel/profiles/<名前>/state.json`。`cache-sentinel/<名前>/` だと従来の
+  `cache-sentinel/state.json` や一時ファイル `state.json.<unique>.tmp`(`src/state.ts` の `tempPathFor`)と同じ階層になり、
+  DSH が受け付ける名前 `state.json` のプロファイルでは保存先のディレクトリを作れない。`profiles/` の下に置けば
+  名前空間が分かれる(DSH 自身の `profiles/<名前>` と同じ形)。
+- Windows で使えない文字(`:` `*` `?` `<` `>` `|` など)と予約名(`CON` など)は DSH も検査しない。
+  その名前では DSH の `profiles/<名前>` の作成が先に失敗し、プロファイルとして起動しないはずなので、
+  cache-sentinel でも検査しない(推測。Windows 実機は未確認)。
+
+## Z4: 複数プロファイルの同時利用 — DSH 側の共有状態
+
+- `$DSH_HOME` はプロファイルに依存しない(`$PK/dsh-home-paths/lib/index.js:109-111` の `resolveDshHome`。
+  引数にプロファイル名は入らない)。`dsh-base/cordis.patch.yml:141,185` の `dshHomePath('sessions')` /
+  `dshHomePath('storages')` も同じホームを指す。
+- **アーカイブ状態(`$DSH_HOME/storages/workspace.json`)は全プロファイルで共有され、cache-sentinel から分離できない。**
+  `WorkspaceRegistry` は起動時に `domain.global.get()` をメモリに持ち(`$PK/dsh-workspace/lib/index.js:383-384`)、
+  書き込みは「メモリ上の global 全体 + 自分の変更」でファイル全体を置き換える(`:938-941`)。
+  `storage-json` の single レイアウトはファイル全体を atomic に置き換える
+  (`$PK/dsh-storage-json/lib/types/atomic.d.ts:1-11`)。プロセス間の直列化は無いので**ロスト更新**になる。
+- この部分は cache-sentinel では防げない。README の Limitations に書いて利用者に委ねるのが #9 で選んだ方針。
