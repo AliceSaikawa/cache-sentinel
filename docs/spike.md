@@ -888,3 +888,47 @@ spec.md §2 の lastResponseAt は、サブエージェントの fork の子に�
 - `/unlock` は引数を取らない。`input` が無いコマンドは bare な入力で `runDetached` に落ちて実行される
   (rc.2 `:1666-1671`)ので現状のままで入力欄から使える。`input` を足すと、メニューで選んだ後にもう一度 Enter が要り、
   行の途中の `/` メニューにも出なくなるだけで得るものが無い。**変更しない。**
+
+---
+
+# 入力欄の上のバナーの見た目 (2026-10-24, DSH 0.2.1-rc.2)
+
+`$PK` = `<DSH のインストール先>/node_modules/@deepseek-ai`。バナーが入力カードより広く、会話欄の全幅に出ていたのを
+入力カードの幅にそろえたときの根拠。ここで使う CSS 変数とトークンは型定義に無い(公開 API ではない)ので、
+変数が無い場合の既定値を置く(spec-ui §E3)。
+
+- `conversation.input.dock` は「Full-width entries above the composer card」
+  (`$PK/dsh-client-ui-conversation/lib/types/client/contract/slots.d.ts:294-299`)。入力カードと同じ `composerStack`
+  (縦並び、`gap: 6px`)の中で、入力カードより先に描かれる(`$PK/dsh-client-ui-conversation/lib/client.js:17834-17845`)。
+  スロットの包み要素は `display: contents`(`$PK/dsh-client-ui-renderer/lib/client.js:1116-1127`)なので、
+  エントリの `100%` は `composerStack` の全幅になる。幅をそろえるのは各エントリの役目。
+- 幅の変数は会話欄が定義する。`--dsh-composer-card-max-width`(本文幅 + 32px)、`--dsh-composer-side-clearance`(16px)、
+  `--dsh-composer-dock-inset`(8px)、`--dsh-composer-stack-gap`(6px)(同 `:17325` の `.wSkVaW_body` と
+  `.wSkVaW_composerStack`。埋め込み表示の `.wSkVaW_embeddedBody` は別の値)。
+- 同じスロットに出る GoalBar は、幅 `100% - 2 × side-clearance - 4 × dock-inset`、上限 `card-max-width - 4 × dock-inset`、
+  `margin: 0 auto`、高さ 36px、角丸 `--dsw-radius-md`、13px(`$PK/dsh-client-ui-goal/lib/client.js:129`、登録は `:604-605`)。
+  キューの Dock は入力カードの上端に差し込む形で、幅は `- 2 × dock-inset`(`$PK/dsh-client-ui-conversation/lib/client.js:16773`)。
+- 入力カードは、外側の `.uV2eYG_root` が左右に `side-clearance` の余白を取り、`.uV2eYG_card` が幅 100%、上限 `card-max-width`
+  (同 `:18703`)。つまり幅 `min(100% - 2 × side-clearance, card-max-width)` で中央に置かれる。
+- バナーは、幅 `100% - 2 × side-clearance`、上限 `card-max-width`、`margin: 0 auto` にして、すぐ下の入力カードと左右の端をそろえた。
+  最初は GoalBar と同じ式にしたが、入力カードより左右 16px(`2 × dock-inset`)ずつ内側になり、実画面でずれて見えた(2026-10-25)。
+- dsh-mobile-maxxing は幅 767px 以下で `[data-slot="conversation.input.dock"] > *` を `100% - 32px`、
+  `card-max-width` を `100%` に上書きする。入力カードも `100% - 32px` になるので、そこでもそろう。
+- 色と角丸のトークンは design-platform.css(`$PK/dsh-client-ui-theme/lib/client.js:1413`)。
+  `--dsw-alias-state-warn-tertiary`(明: amber-100 `#fef5e7`、暗: amber-900)、`--dsw-alias-state-warn-primary`(amber-500)、
+  `--dsw-alias-state-business-tertiary` / `-primary`、`--dsw-alias-state-error-primary`、
+  `--dsw-alias-button-floating-fill` / `-hover`、`--dsw-alias-border-l3`、`--dsw-radius-sm` / `-md`。
+  暗いテーマは `body[data-ds-dark-theme]` で同じ名前の値を差し替える。
+  公式の警告表示(例: `$PK/dsh-client-ui-plugin-market/lib/client.js:117` の `.dq5LxG_notice`)は、背景に warn-tertiary、
+  アイコンに warn-primary を使い、文字は通常の文字色にしている。
+- 小さい副ボタンは `.k74WwW_cardOpen`(高さ 28px、`.5px solid var(--dsw-alias-border-l3)`、`--dsw-radius-sm`、
+  背景 `--dsw-alias-button-floating-fill`、12px)に合わせた(`$PK/dsh-client-ui-plan/lib/client.js:26`)。
+- フォーカスリングは focus.css(`$PK/dsh-client-ui-theme/lib/client.js:1416`)の `--dsw-focus-ring-width`(2px)と
+  `--dsw-focus-ring-color` で描く。ポインター操作中(`html[data-input-modality=pointer]`)は色が透明になる。
+- 公式プラグインは CSS 文字列を `<style data-plugin-css>` で `head` に入れる(`$PK/dsh-client-ui-goal/lib/client.js:130-137`)。
+  バナーは表示中だけ CSS があればよいので、バナーの要素の中に `<style>` を置いた。
+- 確認(実機ではない): 上の CSS(テーマ・会話欄・GoalBar)を抜き出したページに、変更前後の `lib/client.js` を
+  モジュールローダーの形で読み込み、headless Chromium で 1594 / 390 / 320px、明暗のテーマ、ja / en を並べて比べた。
+  ホバー・キーボードフォーカス・disabled は CDP で操作して確かめた。DSH の実画面(認証付きの URL)では未確認。
+  入力カードの幅にそろえた後は、同じページで 1590px(明・暗)と 390px の両方について、警告・許可中・失敗の 3 状態とも、
+  バナーと入力カードの左右の端の差が 0px であることを `getBoundingClientRect` で確かめた。
