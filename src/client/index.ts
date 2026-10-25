@@ -5,7 +5,7 @@
  */
 import { createElement as h, useCallback, useEffect, useState } from 'react'
 import { resolveLocale, type Locale } from '../i18n.ts'
-import { bannerFor, unlockLabel, type StatusLike } from './banner.ts'
+import { bannerFor, unlockLabel, type Banner as BannerView, type StatusLike } from './banner.ts'
 import { fetchStatus } from './fetch-status.ts'
 import { runUnlock } from './run-unlock.ts'
 
@@ -62,33 +62,121 @@ export function apply(ctx: unknown): void {
   )
 }
 
-const styles = {
-  box: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 12,
-    margin: '0 0 8px',
-    padding: '8px 12px',
-    borderRadius: 12,
-    fontSize: 13,
-    lineHeight: '20px',
-    color: 'var(--dsw-alias-label-primary, inherit)',
-  },
-  warning: { background: 'rgba(245, 158, 11, 0.14)', border: '1px solid rgba(245, 158, 11, 0.45)' },
-  info: { background: 'rgba(59, 130, 246, 0.10)', border: '1px solid rgba(59, 130, 246, 0.35)' },
-  text: { flex: 1 },
-  failure: { display: 'block', marginTop: 4, fontWeight: 600 },
-  button: {
-    flex: 'none',
-    padding: '4px 10px',
-    borderRadius: 8,
-    border: '1px solid currentColor',
-    background: 'transparent',
-    color: 'inherit',
-    fontSize: 12,
-    cursor: 'pointer',
-  },
-} as const
+/**
+ * バナーの見た目(docs/spike.md「入力欄の上のバナーの見た目」)。
+ * - 幅は、同じ `conversation.input.dock` に出る公式の GoalBar と同じ式で入力カードの内側にそろえる。
+ * - 色・角丸・ボタンは DSH のデザイントークン(`--dsw-*`)を使い、ダークテーマに追従させる。
+ *   変数が無くなっても読めるよう、明色テーマの値を既定値に置く。
+ * - 狭い幅では、文面を詰めずにボタンだけ次の行へ送る(`flex-wrap` と文面の `flex-basis`)。
+ * `:hover` と `:focus-visible` を書くため、インラインスタイルではなくクラスにして、バナーの中の `<style>` で描く。
+ */
+const CSS = `
+.cache-sentinel-banner {
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  width: calc(100% - 2 * var(--dsh-composer-side-clearance, 16px) - 4 * var(--dsh-composer-dock-inset, 8px));
+  max-width: calc(var(--dsh-composer-card-max-width, 952px) - 4 * var(--dsh-composer-dock-inset, 8px));
+  min-height: 36px;
+  margin: 0 auto;
+  padding: 4px 4px 4px 12px;
+  border: 0.5px solid;
+  border-radius: var(--dsw-radius-md, 12px);
+  color: var(--dsw-alias-label-primary, #0f1115);
+  font-size: 13px;
+  line-height: 20px;
+}
+.cache-sentinel-banner[data-tone='warning'] {
+  background: var(--dsw-alias-state-warn-tertiary, #fef5e7);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-warn-primary, #f59e0b) 40%, transparent);
+}
+.cache-sentinel-banner[data-tone='info'] {
+  background: var(--dsw-alias-state-business-tertiary, #e4edfd);
+  border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #4176e6) 30%, transparent);
+}
+.cache-sentinel-icon {
+  flex: none;
+  display: inline-flex;
+  /* 文面が複数行でも 1 行目(上の余白 4px + 行の高さ 20px)の中央に置く */
+  align-self: flex-start;
+  margin-top: 6px;
+}
+[data-tone='warning'] > .cache-sentinel-icon {
+  color: var(--dsw-alias-state-warn-primary, #f59e0b);
+}
+[data-tone='info'] > .cache-sentinel-icon {
+  color: var(--dsw-alias-state-business-primary, #4176e6);
+}
+.cache-sentinel-text {
+  flex: 1 1 160px;
+  min-width: 0;
+  padding: 4px 8px 4px 0;
+}
+.cache-sentinel-failure {
+  display: block;
+  margin-top: 2px;
+  color: var(--dsw-alias-state-error-primary, #ec1313);
+  font-size: 12px;
+  line-height: 18px;
+}
+.cache-sentinel-button {
+  flex: none;
+  box-sizing: border-box;
+  height: 28px;
+  margin-left: auto;
+  padding: 0 10px;
+  border: 0.5px solid var(--dsw-alias-border-l3, #0000001f);
+  border-radius: var(--dsw-radius-sm, 8px);
+  background: var(--dsw-alias-button-floating-fill, #fff);
+  color: var(--dsw-alias-label-primary, #0f1115);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cache-sentinel-button:hover:not(:disabled) {
+  background: var(--dsw-alias-button-floating-hover, #f1f3f5);
+}
+.cache-sentinel-button:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary, #4176e6));
+  outline-offset: 1px;
+}
+.cache-sentinel-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+`
+
+/** 16px の線画アイコン。警告は三角に「!」、許可中は開いた錠。 */
+const ICON_PATHS = {
+  warning: ['M12 3.5 2.5 20h19z', 'M12 10v4.5', 'M12 17.25v.01'],
+  info: ['M7 11V7.5a5 5 0 0 1 9.6-1.9', 'M5 11h14v10H5z'],
+} as const satisfies Record<BannerView['tone'], readonly string[]>
+
+function Icon({ tone }: { tone: BannerView['tone'] }) {
+  return h(
+    'span',
+    { className: 'cache-sentinel-icon', 'aria-hidden': true },
+    h(
+      'svg',
+      {
+        width: 16,
+        height: 16,
+        viewBox: '0 0 24 24',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 2,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+      },
+      ...ICON_PATHS[tone].map((d) => h('path', { d })),
+    ),
+  )
+}
 
 function Banner({ sessionId, locale, unlock }: BannerProps) {
   const [status, setStatus] = useState<StatusLike | undefined>(undefined)
@@ -134,17 +222,23 @@ function Banner({ sessionId, locale, unlock }: BannerProps) {
 
   return h(
     'div',
-    { role: 'status', 'data-testid': 'cache-sentinel-banner', style: { ...styles.box, ...styles[banner.tone] } },
+    { role: 'status', 'data-testid': 'cache-sentinel-banner', 'data-tone': banner.tone, className: 'cache-sentinel-banner' },
+    h('style', null, CSS),
+    h(Icon, { tone: banner.tone }),
     h(
       'span',
-      { style: styles.text },
+      { className: 'cache-sentinel-text' },
       banner.text,
       warning && failure !== undefined
-        ? h('span', { role: 'alert', 'data-testid': 'cache-sentinel-unlock-error', style: styles.failure }, failure)
+        ? h('span', { role: 'alert', 'data-testid': 'cache-sentinel-unlock-error', className: 'cache-sentinel-failure' }, failure)
         : null,
     ),
     warning
-      ? h('button', { type: 'button', style: styles.button, disabled: busy, onClick: () => void onUnlock() }, unlockLabel(locale))
+      ? h(
+          'button',
+          { type: 'button', className: 'cache-sentinel-button', disabled: busy, onClick: () => void onUnlock() },
+          unlockLabel(locale),
+        )
       : null,
   )
 }

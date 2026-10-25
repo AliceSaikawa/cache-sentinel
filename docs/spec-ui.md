@@ -126,6 +126,10 @@
 - クライアントの `inject` は `['slots', 'remote', 'remote.commands']`。`remote.commands` は `remote` とは別のサービスキーで、
   宣言しないと使った時点で例外になる(#26、根拠は spike.md「クライアント側 `remote.commands` の inject」)。
 - 取得 URL は `new URL('api/cache-sentinel.status?sessionId=…', document.baseURI)`。
+- 見た目: 幅は、同じスロットに出る公式の GoalBar と同じ式で入力カードの内側にそろえる。色・角丸・ボタンは DSH のデザイントークン
+  (`--dsw-*`)を使い、暗いテーマに追従させる。これらの CSS 変数は公開 API ではないので、無い場合の既定値(明るいテーマの値)を置く。
+  警告には三角、許可中には開いた錠のアイコンを付ける。狭い幅では文面を詰めずにボタンだけ次の行に送る。
+  根拠は spike.md「入力欄の上のバナーの見た目」。
 - ビルド: esbuild で CJS(browser)にし、`window.__ModuleLoader__.load({ id, factory })` で包む(dsh-webui-m3e と同じ)。React は外部(シェルが提供)。
   React の型のために依存を足さず、使う API だけの最小の型宣言を置く。
 
