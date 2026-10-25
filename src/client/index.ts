@@ -64,7 +64,7 @@ export function apply(ctx: unknown): void {
 
 /**
  * バナーの見た目(docs/spike.md「入力欄の上のバナーの見た目」)。
- * - 幅は、同じ `conversation.input.dock` に出る公式の GoalBar と同じ式で入力カードの内側にそろえる。
+ * - 幅は、すぐ下の入力カードと同じ式にして左右の端をそろえる。
  * - 色・角丸・ボタンは DSH のデザイントークン(`--dsw-*`)を使い、ダークテーマに追従させる。
  *   変数が無くなっても読めるよう、明色テーマの値を既定値に置く。
  * - 狭い幅では、文面を詰めずにボタンだけ次の行へ送る(`flex-wrap` と文面の `flex-basis`)。
@@ -77,8 +77,8 @@ const CSS = `
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 10px;
-  width: calc(100% - 2 * var(--dsh-composer-side-clearance, 16px) - 4 * var(--dsh-composer-dock-inset, 8px));
-  max-width: calc(var(--dsh-composer-card-max-width, 952px) - 4 * var(--dsh-composer-dock-inset, 8px));
+  width: calc(100% - 2 * var(--dsh-composer-side-clearance, 16px));
+  max-width: var(--dsh-composer-card-max-width, 952px);
   min-height: 36px;
   margin: 0 auto;
   padding: 4px 4px 4px 12px;
