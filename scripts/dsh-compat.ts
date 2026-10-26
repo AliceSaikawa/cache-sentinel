@@ -33,7 +33,8 @@ const MAX_DETAILS = 10
 
 /**
  * cache-sentinel が使う DSH のパッケージ。ここが変われば互換性を確認し直す。
- * docs/spike.md の互換調査で比べた対象に、その後に依存したもの(#9 の dsh-app-boot・dsh。spike.md Z1・Z3)を足したもの。
+ * docs/spike.md の互換調査で比べた対象に、その後に依存したもの(#9 の dsh-app-boot・dsh。spike.md Z1・Z3)と、
+ * spike.md の各節が根拠に挙げているもの(0.2.1-rc.3 の調査で追加)を足したもの。
  */
 export const PACKAGES: readonly string[] = [
   '@deepseek-ai/dsh-agent',
@@ -55,6 +56,32 @@ export const PACKAGES: readonly string[] = [
   // #9: ProfileContext の型とプロファイル名の検証(dsh-app-boot)、profileContext の provide(dsh)。
   '@deepseek-ai/dsh-app-boot',
   '@deepseek-ai/dsh',
+  // pre-step の prepend リスナー(spike.md「根拠(rc.1)」1)。
+  '@deepseek-ai/dsh-session-reference',
+  // 対応版の評価とインストール時の検査(#31。spike.md K2)。
+  '@deepseek-ai/dsh-plugin-manager',
+  // クライアントの remote.commands と、入力欄からのコマンド実行(#26・#36。spike.md「クライアント側 remote.commands の inject」・Y2)。
+  '@deepseek-ai/dsh-client-ui-commands',
+  '@deepseek-ai/dsh-client-ui-input-trigger',
+  '@deepseek-ai/dsh-api-session-controller',
+  '@deepseek-ai/dsh-typert-protocol',
+  // 入力の出どころ source.kind と form(#7・#29。spike.md P2・N1)。
+  '@deepseek-ai/dsh-llm',
+  '@deepseek-ai/dsh-skill',
+  '@deepseek-ai/dsh-tool-skill',
+  '@deepseek-ai/dsh-tool-jobs',
+  '@deepseek-ai/dsh-schedule',
+  '@deepseek-ai/dsh-goal-round-driver',
+  '@deepseek-ai/dsh-command-goal',
+  '@deepseek-ai/dsh-user-questions',
+  '@deepseek-ai/dsh-experimental-agent-team',
+  // サブエージェントの子セッション(#13。spike.md R1〜R4)。
+  '@deepseek-ai/dsh-subagent',
+  '@deepseek-ai/dsh-subagent-fork-in-process',
+  '@deepseek-ai/dsh-subagent-spawn-in-process',
+  // バナーの描画と配色(#46。spike.md「入力欄の上のバナーの見た目」)。
+  '@deepseek-ai/dsh-client-ui-renderer',
+  '@deepseek-ai/dsh-client-ui-theme',
 ]
 
 /** パッケージ 1 つ分のファイル一覧。相対パス → 内容のハッシュ。 */
