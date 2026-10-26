@@ -50,7 +50,7 @@ test('icon は DSH が読める形式・大きさ(SVG / PNG / JPEG / WebP、256 
 })
 
 test('対応する DSH の版を peerDependencies で宣言している', () => {
-  assert.deepEqual(manifest.peerDependencies, { '@deepseek-ai/dsh': '>=0.2.0-rc.2 <=0.2.1-rc.2' })
+  assert.deepEqual(manifest.peerDependencies, { '@deepseek-ai/dsh': '>=0.2.0-rc.2 <=0.2.1-rc.3' })
 })
 
 test('engines.dsh を宣言していない(あると DSH は peerDependencies を見ずに engines.dsh だけで判定する)', () => {

@@ -47,7 +47,7 @@ jobs:
       # rejects anything that is not exactly one published version, which keeps
       # the inputs out of paths and command lines unchecked.
       # On pull_request the inputs are empty and the pinned pair is used; its
-      # known result is 15 `same` and `dsh-client-modules` as `diff`.
+      # known result is 37 `same` and `dsh-client-modules` as `diff`.
       - name: Resolve versions
         id: versions
         env:

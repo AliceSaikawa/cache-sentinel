@@ -4,6 +4,7 @@
 
 README の対応範囲(DSH 0.2.0-rc.2〜0.2.1-rc.1)の両端の版で、cache-sentinel の主な機能を同じ手順で動かした記録。
 対応範囲はその後 #31 で 0.2.1-rc.2 まで広げた(rc.2 は型と実装の比較のみ。[spike.md](spike.md) の「rc.2 の追加調査」)。
+2026-10-26 に 0.2.1-rc.3 まで広げ、rc.3 は実機でも動かした(後半の「0.2.1-rc.3 での確認」)。
 途中の版(0.2.1-alpha.1〜alpha.5)は実機で動かしていない。型定義と実装の比較の結果は [spike.md](spike.md) の
 「DSH 0.2.1 系との互換調査」にある。
 
@@ -118,6 +119,54 @@ rc.1 が 403 を返すのは owner 以外の Peer だが、rc.1 の配布物で�
 - Issue: [#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)。修正は [#37](https://github.com/AliceSaikawa/cache-sentinel/pull/37)(この記録の時点で未マージ)。それまでの間、README 3 言語の `/sentinel` の節に、入力欄からは
   使えないことを注記した。
 
+## 0.2.1-rc.3 での確認 (2026-10-26)
+
+対応範囲を 0.2.1-rc.3 まで広げるときに、上と同じ作り方の環境で rc.3 を動かした。上の手順のうち一部だけを行い、
+範囲の検査(追加時の拒否と起動時のスキップ)を足した。型と実装の比較は [spike.md](spike.md) の「rc.3 の追加調査」にある。
+
+上の「環境」との違い:
+- DSH は `npm install --prefix <作業ディレクトリ>/0.2.1-rc.3/prefix @deepseek-ai/dsh@0.2.1-rc.3`。`dsh --version` は `0.2.1-rc.3`。
+- cache-sentinel の tgz を 2 つ使った。どちらも版は `0.6.0-rc.2` で、中の `lib/index.js`・`lib/client.js` は main の
+  `409caf8` のコミット済みの `lib/` と一致する。違うのは `package.json` の宣言の上限だけ。
+  - 上限が 0.2.1-rc.2 のもの: main(`409caf8`)の `pnpm pack`。sha256 は `178c1799003c5ae5fd272d654f1875189e8dbf312e8f55ead5db8aae6794e05b`。
+  - 上限が 0.2.1-rc.3 のもの: 上限を変えたブランチの `pnpm pack`。sha256 は `239f5a8db0eadcc21653dc172d82b9ee56188e6abedece6653076c82867351ff`。
+- 設定(`idleMinutes: 1`、`checkIntervalSeconds: 10`)、モック LLM、headless chromium の使い方は上と同じ。
+
+| 項目 | 0.2.1-rc.3 |
+|---|---|
+| 範囲の検査: 上限が rc.2 の tgz を追加する | 拒否される(プロファイルの `package.json` などは元に戻る) |
+| 範囲の検査: 上限が rc.2 の tgz を入れたまま起動する | バンドルがスキップされる。DSH は起動し、cache-sentinel は動かない |
+| 範囲の検査: 上限が rc.3 の tgz を追加して起動する | 免除なしで追加でき、cache-sentinel が起動する |
+| 入力禁止: 失効後の送信を拒否し、モデルへのリクエストを出さない(B1) | 動作 |
+| ブロック通知: turn の外に書かれ、折りたたみを開かずに読める(#27) | 動作 |
+| 入力欄の上のバナー: 失効中は警告とボタン、押した後は「許可中」 | 動作。左右の端は入力カードと一致(差 0px) |
+| バナーのボタン「次の 1 回を許可(/unlock)」(#34 の修正後) | 動作 |
+| `/unlock` の後の送信が通る(B3) | 動作 |
+| 入力欄から引数つきの `/sentinel archive`(#37 の修正後) | 動作(コマンドとして実行され、モデルには届かない) |
+| archive のサイクル: 応答から 1 分後にアーカイブする(A1) | 動作 |
+
+手順と結果:
+1. 上限が rc.2 の tgz を `dsh plugin --profile web add file:<tgz>` で追加した。pnpm が入れた後、
+   `dsh: installation rejected: Plugin cache-sentinel@0.6.0-rc.2 is incompatible with dsh 0.2.1-rc.3: requirements {"@deepseek-ai/dsh":">=0.2.0-rc.2 <=0.2.1-rc.2"}. …`
+   で終わり、`dsh: restored package.json, pnpm-lock.yaml, and node_modules.` が出た。プロファイルの `package.json` に cache-sentinel は無い。
+2. DSH 0.2.1-rc.2 で入れた cache-sentinel を残したまま DSH を 0.2.1-rc.3 に更新した状態を作った。`allow-version` で免除を付けて
+   同じ tgz を追加し、`revoke-version` で免除を外した(`compatibility.json` は `{}`)。この状態で `dsh web` を起動すると、stderr に
+   `dsh: skipping profile bundle "cache-sentinel": Error: Plugin cache-sentinel@0.6.0-rc.2 is incompatible with dsh 0.2.1-rc.3: …` が出た。
+   `dsh web` の URL は表示され、`[cache-sentinel]` の行は 1 つも出なかった。
+3. 上限が rc.3 の tgz を追加した(免除なし)。起動すると `[cache-sentinel] 開始 (モード block, 入力禁止 1 分, both のアーカイブ 1440 分)` が出た。
+4. 新しいセッションで送信し、応答の直後にもう一度送信した。どちらもモックに届いて応答した。
+5. 最後の応答から 1 分を過ぎると、バナーが入力欄の上に 1 つ出た。文言とボタンは上の手順 2 と同じ。
+   バナーと入力カードの左右の端は、どちらも 458.5px と 1194.5px(幅 1380px の画面、`getBoundingClientRect`)。
+6. 失効したまま送信した。サーバーログに `ブロックしました: <id> (最終応答から 1 分, turn 3 step 1)`。セッションログは
+   `turn/start`、`turn/end`(`kind: "blocked"`)、`command/run`(`name: "cache-sentinel"`)、`command/done`(`kind: "error"`)の順で、
+   `step/start` は無く、モックにもリクエストは届かない。通知は turn の外にあり、画面では折りたたみを開かずに読めた。
+7. バナーのボタンを押した。セッションログに `command/run`(`name: "unlock"`)と `command/done`(`kind: "success"`、「次の送信を許可しました…」)。
+   バナーは「次の送信を許可中(キャッシュなしの料金になります)。あと 10 分」に変わり、ボタンは消えた。
+   続けて送信すると通ってモックに届き、サーバーログに `/unlock の許可で通しました`。
+8. 入力欄に `/sentinel archive` と入れて Enter を 1 回押した。`command/run` は `name: "sentinel"`、`args: " archive"`。
+   モックへのリクエストは増えず、サーバーログに `モードを変更しました: block → archive(/sentinel)`。
+9. そのまま放置すると、1 分ほどで `1 件をアーカイブしました` が出て、セッションは一覧から消えた。
+
 ## 確認していないこと
 
 - 0.2.1-alpha.1〜alpha.5 の実機。
@@ -126,5 +175,6 @@ rc.1 が 403 を返すのは owner 以外の Peer だが、rc.1 の配布物で�
 - ブラウザ以外の接続元(`/connect` で受け取る API 用の Cookie)からの状態取得 API(上記「0.2.1-rc.1 の 403 について」)。
 - 0.2.1-rc.1 での、#34 で直したバナーのボタン。
 - 実在の LLM での応答。今回はモックで、ストリームの形は最小限(テキスト 1 ブロック)。
-- 0.2.1-rc.2 以降(2026-10-18 時点の `next` は rc.2)。対応範囲を広げるかは別に扱う。
-  → #31 で 0.2.1-rc.2 まで広げた。rc.2 の実機確認はしていない。
+- 0.2.1-rc.2 の実機(#31 で範囲に含めたが、手順は未実行。型と実装の比較は [spike.md](spike.md) の「rc.2 の追加調査」)。
+- 0.2.1-rc.3 では、上の「0.2.1-rc.3 での確認」に挙げた項目以外。状態取得 API の curl(E1)、`/sentinel` の
+  `archive` 以外の引数、手動解除の検出(A5)と再アーカイブ(C1)、狭い幅や暗いテーマでのバナーは試していない。
