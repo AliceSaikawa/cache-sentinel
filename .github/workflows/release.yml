@@ -71,9 +71,14 @@ jobs:
       - name: Pack
         run: pnpm pack --out cache-sentinel.tgz
 
+      # The generated notes end each line with "by @<author> in <PR URL>";
+      # scripts/release-notes.ts rewrites that to "(#<number>)".
       # `gh release create` fails if a Release for the tag already exists, so a
       # published asset is never overwritten.
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" cache-sentinel.tgz --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" --jq .body \
+            | node scripts/release-notes.ts > release-notes.md
+          gh release create "$GITHUB_REF_NAME" cache-sentinel.tgz --title "$GITHUB_REF_NAME" --notes-file release-notes.md --verify-tag
