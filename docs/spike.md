@@ -219,6 +219,77 @@ dsh-client-modules・dsh-base・dsh-web-app の 3 つで、他の 13 は `packag
 
 壊れる箇所は rc.2 でも見つからなかった。rc.2 は「型と実装の比較」で確認した範囲で、実機での確認は別。
 
+## rc.3 の追加調査 (2026-10-26)
+
+対応範囲を 0.2.1-rc.3 まで広げる根拠。`node scripts/dsh-compat.ts /var/tmp/dsh-compat 0.2.1-rc.2 0.2.1-rc.3` を実行した。
+
+今回から、比べるパッケージに 20 個を足して 38 個にした。足したのは、この文書の後の節(K2・P2・N1・R1〜R4・Y2、
+「クライアント側 `remote.commands` の inject」「入力欄の上のバナーの見た目」)と上の rc.1 の根拠 1 が挙げているパッケージ。
+それまでの 18 個は、#20 の時点の 16 個に #9 の 2 個を足したもので、その後に依存したパッケージが入っていなかった。
+
+38 パッケージ中 diff は dsh-client-modules・dsh-client-ui-conversation・dsh-web-app・dsh-api-session-controller の 4 つで、
+他の 34 は `package.json` を除いて rc.2 と同一。行番号は特記なければ rc.3 のもの。
+
+| 項目 | rc.3 |
+|---|---|
+| 1 `agent/pre-step` | 変更なし(dsh-agent・dsh-agent-loop・dsh-compaction-basic・dsh-session-reference が同一) |
+| 2 Session / command イベント | 変更なし(dsh-session・dsh-commands が同一) |
+| 3 `commands.register` | 変更なし(dsh-commands が同一) |
+| 4 `workspaceRegistry` / `sessionPersistence.list()` | 変更なし(dsh-workspace・dsh-session-persistence(-jsonl) が同一) |
+| 5 `connection.fetch.register` | 変更なし(dsh-client-connection が同一) |
+| 6 セッションログの配置 | 変更なし(dsh-session-persistence-jsonl が同一) |
+| 7 クライアント(`dsh.client`・`conversation.input.dock`・`remote.commands.execute`) | 変更なし。dsh-client-modules の差分はビルド識別子 1 行。dsh-client-ui-conversation の差分(下記)は入力欄の上のスロットとコマンドの実行に触れない |
+| 8 バンドルの提供サービス | 変更なし。dsh-web-app に `entry-customization` の行が増えただけ。dsh-base は同一 |
+| 9 入力の出どころ `source.kind`・`form`(P2・N1) | 変更なし(dsh-llm・dsh-skill・dsh-tool-skill・dsh-tool-jobs・dsh-schedule・dsh-goal-round-driver・dsh-command-goal・dsh-user-questions・dsh-experimental-agent-team が同一。dsh-api-session-controller の差分は型のコメント 1 行) |
+| 10 サブエージェントの子(R1〜R4) | 変更なし(dsh-subagent・dsh-subagent-fork-in-process・dsh-subagent-spawn-in-process が同一) |
+| 11 入力欄からのコマンド実行(Y2)と `remote.commands`(#26) | 変更なし(dsh-client-ui-commands・dsh-client-ui-input-trigger・dsh-typert-protocol が同一。dsh-client-ui-conversation の受け側は同じ行のまま) |
+| 12 バナーの描画(dock の位置・CSS 変数・トークン) | 変更なし(dsh-client-ui-renderer・dsh-client-ui-theme が同一。会話欄の CSS 変数も同じ値) |
+| 13 対応版の評価(K1・K2) | 変更なし(dsh-app-boot・dsh-plugin-manager が同一) |
+
+差分の中身:
+- dsh-client-modules: `$PK/dsh-client-modules/lib/index.js:540` の `const commit = "be72761"` だけが rc.2 の
+  `"332895e"` と違う(どちらもファイル全体で 42,376 バイト)。
+- dsh-web-app: `$PK/dsh-web-app/cordis.patch.yml:426-429` に `entry-customization`
+  (`@deepseek-ai/dsh-client-ui-entry-customization`)の行が増えた。このプラグインが登録するスロットは
+  `sidebar.panellist.actions`・`conversation.session.header.views.actions`・`sidebar.right.tab.guide.actions` の 3 つで
+  (`$PK/dsh-client-ui-entry-customization/lib/client.js:129-146`)、`conversation.input.dock` は使わない。
+  メニューの「プラグインを作る」は、新しいセッションを開いて入力欄に下書きを入れるだけ(同 `:117-125`。
+  `startSession` は空のセッションを開いて未送信の下書きを置く: `$PK/dsh-client-ui-workspace/lib/types/client/navigation.d.ts:50-58`)。
+  送信は利用者が入力欄から行うので、ほかの送信と同じく pre-step を通る。
+- dsh-client-ui-conversation: 変わったのは次の 4 つ。
+  - ビューのタブの「More」メニューとピン留め。新しいスロット `conversation.session.header.views.actions`
+    (`lib/types/client/contract/slots.d.ts`)、`view-pins.d.ts`(新規)、`lib/client.js:17997` の `createViewPins`、
+    `:18049` の `ViewsMoreMenu`。会話欄の CSS で変わったのはタブの規則(`.wSkVaW_tabs` など)だけ。
+  - 下書きの初期化に `whenDraftExists`(`replace` / `append` / `keep`)が増え、エディタに `appendDraft` が増えた
+    (`contract/input.d.ts`、`input/editor/runtime.d.ts`、`lib/client.js:14704`)。
+  - 送信時の計測に `is_new_session`・`agent_preset` が増えた(`contract/composer-submission.d.ts`、`lib/client.js:15743-15769`)。
+  - 文言キー `session.moreViews`・`session.moreViewsCurrent`(`locales.d.ts`)。
+
+  `conversation.input.dock` の契約(`slots.d.ts:300-305`)、`composerStack` の中で入力カードより先に dock を描くこと
+  (`lib/client.js:17909`)、`.wSkVaW_body` の `--dsh-composer-card-max-width`・`--dsh-composer-side-clearance`・
+  `--dsh-composer-dock-inset`(`:17386`)、入力カードの CSS(`:18886`)は、行が動いただけで中身は rc.2 と同じ。
+  Y2 で挙げた `argsAfter`(`:5064`)と `SubmitMachine.onAdjudicated`(`:5193`)は最初の変更箇所(`:14551`)より前にあり、
+  行番号も rc.2 と同じ。
+- dsh-api-session-controller: `lib/types/client/sessions/service.d.ts:36` のコメントに「New Session and」が足されただけ。
+
+壊れる箇所は rc.3 でも見つからなかった。
+
+宣言は `>=0.2.0-rc.2 <=0.2.1-rc.3` にした。rc.3 の `dsh-app-boot` の `evaluatePluginCompatibility(manifest, {}, <版>)` を
+直接呼んだ結果、範囲内は 0.2.0-rc.2・0.2.1-alpha.1・0.2.1-alpha.5・0.2.1-rc.1・0.2.1-rc.2・0.2.1-rc.3、範囲外は
+0.2.0-rc.1・0.2.1-rc.4・0.2.1・0.2.2・0.3.0。0.2.0-rc.2 と 0.2.1-rc.1 の `dsh-app-boot` で、それぞれ自身の版を評価しても範囲内。
+正式版 0.2.1 は 2026-10-26 時点で未リリースなので、K4 と同じ理由で範囲に入れない。
+
+実機での確認(2026-10-26)。npm の `@deepseek-ai/dsh@0.2.1-rc.3` を隔離した環境で動かした。主な機能の結果は
+[dsh-version-check.md](dsh-version-check.md) の「0.2.1-rc.3 での確認」にあり、ここには範囲の宣言に関わる結果だけ書く。
+- 上限が 0.2.1-rc.2 のままの cache-sentinel(main の `409caf8` の `pnpm pack`)は、追加の時点で拒否された
+  (`dsh: installation rejected: Plugin cache-sentinel@0.6.0-rc.2 is incompatible with dsh 0.2.1-rc.3: …`)。
+  `file:` 指定なので、pnpm で入れた後に判定して `package.json`・`pnpm-lock.yaml`・`node_modules` を戻す(K2 の tarball 指定と同じ)。
+- 同じ tgz を一時的な免除(`allow-version`)で入れ、免除を取り消してから `dsh web` を起動した。stderr に
+  `dsh: skipping profile bundle "cache-sentinel": Error: Plugin cache-sentinel@0.6.0-rc.2 is incompatible with dsh 0.2.1-rc.3: …`
+  が出て、`dsh web` 自体は起動し、`[cache-sentinel]` の起動ログは出なかった。K5 の fail-open(DSH を範囲外の版に
+  更新するとガードが外れる)を実機で確かめた。
+- 上限を 0.2.1-rc.3 にした tgz は免除なしで追加でき、起動ログ `[cache-sentinel] 開始 (モード block, …)` が出た。
+
 ---
 
 # 対応 DSH 版の宣言とその評価 (2026-10-23, DSH 0.2.1-rc.2) — Issue #31
@@ -318,6 +389,7 @@ K3 のとおり公式の前例が無く、`engines.dsh` を書くと peer を書
 - 検討した別案: `<0.2.1` は 0.2.1-rc.3 が入るため不可。`^0.2.1-rc.2` は 0.2.0-rc.2 と alpha 系が入らないため不可。
   `>=0.2.0-rc.2` だけでは 0.2.2 以降も入るため不可。
 - 正式版 `0.2.1` は範囲に入れない(2026-10-23 時点で未リリース。入れると未確認の版を許可することになる)。
+- 2026-10-26 に上限を 0.2.1-rc.3 にした(`<=0.2.1-rc.3`)。評価の結果は上の「rc.3 の追加調査」。
 
 ## K5: 宣言の副作用 — 確定(注意点)
 
@@ -328,6 +400,8 @@ K3 のとおり公式の前例が無く、`engines.dsh` を書くと peer を書
 - 上限を固定しているので、DSH の rc.3 や 0.2.1 正式版が出ると、更新した時点で cache-sentinel は自動でスキップされ、
   入力禁止などのガードが外れる(fail-open)。気づく手がかりは起動時の stderr の `skipping profile bundle` だけ。
   Issue #31 の意図どおり(未確認の版では動かさない)だが、新しい版が出たら K6 の手順で範囲を見直す。
+  rc.3 では、上限が rc.2 の cache-sentinel が追加時に拒否され、起動時にスキップされることを実機で確かめた
+  (上の「rc.3 の追加調査」)。
 - インストール時の事前検査は「プロファイルの依存を解決した版の `package.json`」を見るため、
   `github:` 指定では取得後、レジストリ指定では選ばれる版の宣言が評価される。
 
@@ -335,7 +409,8 @@ K3 のとおり公式の前例が無く、`engines.dsh` を書くと peer を書
 
 1. 互換調査: `node scripts/dsh-compat.ts <作業ディレクトリ> <範囲の上限の版> <新しい版>` で、cache-sentinel が使う
    パッケージの差分を取る(使い方は README の Development 節)。差分があれば、上の「DSH 0.2.1 系との互換調査」の
-   項目 1〜8 に照らして影響を調べ、この文書に追記する。壊れる箇所があれば、範囲を広げる前に直す。
+   項目 1〜8 と「rc.3 の追加調査」の項目 9〜13 に照らして影響を調べ、この文書に追記する。壊れる箇所があれば、
+   範囲を広げる前に直す。cache-sentinel が新しいパッケージに依存したときは、`scripts/dsh-compat.ts` の `PACKAGES` にも足す。
 2. 宣言の更新: `package.json` の `peerDependencies` の上限(`<=<版>`)を新しい版にする。正式版や次の minor に
    広げる場合は、K4 の表のように範囲内・範囲外の版を挙げて `satisfies` の結果を確かめる。
 3. テストの更新: `tests/package.test.ts` の宣言の値を新しい範囲にする。README 3 言語に同じ範囲が書かれているかも
