@@ -1040,6 +1040,8 @@ spec.md §2 の lastResponseAt は、サブエージェントの fork の子に�
   `storage-json` の single レイアウトはファイル全体を atomic に置き換える
   (`$PK/dsh-storage-json/lib/types/atomic.d.ts:1-11`)。プロセス間の直列化は無いので**ロスト更新**になる。
 - この部分は cache-sentinel では防げない。README の Limitations に書いて利用者に委ねるのが #9 で選んだ方針。
+- 実機でも確かめた(DSH 0.2.2-alpha.2、`web` と `web2` の同時起動。[multi-profile-check.md](multi-profile-check.md))。
+  0.2.2-alpha.2 でも `dsh-workspace/lib/index.js` の行番号は同じ(`:383-384`・`:938-941`)。
 
 ---
 
