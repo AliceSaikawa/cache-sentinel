@@ -118,7 +118,7 @@ Desktop プロファイルでの実機確認は**未確認**。コード確認�
 
 | 見つかった点 | 既存 Issue |
 |---|---|
-| web と desktop で `$DSH_HOME` を共有すると `state.json` が競合する | #9 |
+| web と desktop で `$DSH_HOME` を共有すると `state.json` が競合する | #9(再現を確認し #44 で修正。[multi-profile-check.md](multi-profile-check.md)) |
 | `github:` 指定でそのまま入れると `lib/` が無く動かない(推奨環境での導入導線) | #14 |
 | desktop プロファイルの導入手順・「Desktop でバナーが出ないとき」のトラブルシューティング | #15 |
 | `agent/pre-step` の判定が入力の出どころ(source)を見ず、answer-guard のリマインダーも止める | #7 |
@@ -139,11 +139,10 @@ Linux は Desktop のビルド/配布対象外で、cargo / `rdsh` / Desktop ア
 4. 状態 API: アプリ内のセッションで DevTools から `fetch('api/cache-sentinel.status?sessionId=<id>', { credentials: 'same-origin' })` が 200 を返すか(403 ならオリジンか信頼判定の問題)。
 5. バナー: `idleMinutes` を小さくして失効させ、入力欄の上に警告とボタンが出るか(ボタンの不具合は修正版との同時確認にする)。
 6. ブロック通知: 失効セッションへ送信して会話に通知が出るか、`/unlock` で 1 回通るか。
-7. 共有状態(#9 の残課題。PR #44 は `Refs #9` で、Issue #9 の完了条件「再現の有無と条件が記録されている」はこの確認で満たす):
-   - 再現: 修正前の版で web と desktop を同時に動かし、一方の `/sentinel` のモード変更が、もう一方の書き込み(`/sentinel` のモード変更など)で `$DSH_HOME/cache-sentinel/state.json` から消えるかと、その条件を記録する。
-   - 修正後: `state.json` がプロファイルごと(`$DSH_HOME/cache-sentinel/profiles/<プロファイル名>/state.json`)に分かれ、開始ログの「状態ファイル: …」がそのパスと一致すること(「(プロファイル名なし)」が付くなら `profileContext` が取れていない)。
-   - 移行: 各プロファイルの最初の起動で、従来の `$DSH_HOME/cache-sentinel/state.json` の内容でプロファイル別のファイルが作られ(ログ「状態ファイルを作りました: …」)、2 回目以降は作られないこと。従来のファイルが変わらないこと。
-   - アーカイブ状態(`storages/workspace.json`)は共有されたままなこと(README の Limitations)。
+7. 共有状態(#9)。再現の有無と条件は、Linux で `web` と `web2`(`web` のテンプレートから作ったプロファイル)を同時に動かして記録した([multi-profile-check.md](multi-profile-check.md)。修正前の版で再現し、修正後の版では `state.json` の競合は起きず、アーカイブ状態の競合は残る)。Desktop で残るのは、Desktop アプリ固有の部分の確認:
+   - 修正後: `state.json` が `$DSH_HOME/cache-sentinel/profiles/desktop/state.json` に分かれ、開始ログの「状態ファイル: …」がそのパスと一致すること(「(プロファイル名なし)」が付くなら、Desktop の起動経路では `profileContext` が取れていない)。
+   - 移行: Desktop の最初の起動で、従来の `$DSH_HOME/cache-sentinel/state.json` の内容でプロファイル別のファイルが作られ(ログ「状態ファイルを作りました: …」)、2 回目以降は作られないこと。従来のファイルが変わらないこと。
+   - web と同時に動かし、片方の `/sentinel` のモード変更がもう片方のファイルとモードを変えないこと。
 8. あわせて: desktop プロファイルの実 `package.json`(`bundles` に `@deepseek-ai/dsh-web-app` の有無)、UI を読むオリジン、レンダラの exact route 信頼判定と同梱 DSH の版(0.2.1-alpha.2)の明記。
 
 ### answer-guard の干渉(LLM 応答が必要)
