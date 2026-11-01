@@ -13,7 +13,7 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
 - **禁止输入（`block`）**：保持会话可打开和阅读，仅阻止你的发送。代理正在进行的工作（工具执行、作业、子代理、目标、提醒）不会被阻止。若希望继续发送，可通过输入框上方的按钮或 `/unlock` 命令仅允许下一次发送。
 - **自动归档（`archive`）**：自动归档一段时间未更新的会话，将其从侧边栏隐藏并设为不可打开。
 
-您可以随时在聊天输入框中通过 `/sentinel` 命令切换到结合两者的 `both` 模式（60 分钟后禁止输入，24 小时后归档），或暂时停用功能的 `off` 模式。（在官方 Web UI 中，带参数的 `/sentinel` 目前无法从输入框执行：[#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)。）
+您可以随时在聊天输入框中通过 `/sentinel` 命令切换到结合两者的 `both` 模式（60 分钟后禁止输入，24 小时后归档），或暂时停用功能的 `off` 模式。
 
 ## 安装
 
@@ -67,7 +67,6 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
 - `/sentinel`：显示当前生效模式及其来源（通过 `/sentinel` 设置 / YAML 设置）、阈值、当前会话距最后一次响应的经过分钟数，以及 `dryRun` 状态。
 - `/sentinel block` | `archive` | `both` | `off`：切换生效模式。保存在 `$DSH_HOME/cache-sentinel/profiles/<配置文件>/state.json` 中（按配置文件分开），DSH 重启后依然保持（优先于 YAML 中的 `mode`）。
 - `/sentinel default`：清除通过 `/sentinel` 保存的模式，恢复为 YAML 中的 `mode` 设置。
-- 注意：在官方 Web UI 中，带参数的 `/sentinel`（`block`、`archive`、`both`、`off`、`default`）目前无法从输入框执行，会作为普通消息发送（[#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)）。不带参数的 `/sentinel` 和 `/unlock` 可以使用。在修复之前，请通过 YAML 中的 `mode` 切换模式。
 
 参数可选。在输入框中输入 `/sentinel ` 后，在输入参数之前，候选项会以占位文字的形式显示。
 

@@ -533,10 +533,13 @@ test('#27: agent/status の購読は payload.agent.session を取り出し、idl
 
   // 失効したセッション (最終応答から 61 分)。append を記録する。
   // apply は実時計 (Date.now) を使うので、イベント時刻も実時計から作る。
+  // 時刻は先に 1 回だけ決める。判定は now() を取ってから snapshotEvents を読むので、
+  // 読むたびに作ると、その間に時計が進んだとき経過が 61 分に 1 ms 足りず 60 分と表示される。
+  const lastStepEndAt = Date.now() - 61 * MINUTE
   const appends: Array<{ type: string; data: unknown }> = []
   const session = {
     id: 's1',
-    snapshotEvents: () => [{ type: 'step/end', time: Date.now() - 61 * MINUTE }],
+    snapshotEvents: () => [{ type: 'step/end', time: lastStepEndAt }],
     append: (type: string, data: unknown) => {
       appends.push({ type, data })
     },
