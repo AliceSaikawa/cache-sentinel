@@ -28,8 +28,40 @@ export const DEFAULTS: Required<Omit<Config, 'stateFile'>> = {
   dryRun: false,
 }
 
-/** stateFile は既定値を持たない(未指定なら呼び出し側が場所を決める)ので別に足す。 */
-const KNOWN_KEYS: ReadonlySet<string> = new Set([...Object.keys(DEFAULTS), 'stateFile'])
+/** 整数の設定キー。 */
+export type IntegerKey = 'idleMinutes' | 'archiveAfterMinutes' | 'unlockTtlMinutes' | 'checkIntervalSeconds' | 'maxPerCycle'
+/** boolean の設定キー。 */
+export type BooleanKey = 'skipPinned' | 'archiveExisting' | 'dryRun'
+
+/**
+ * 設定キー 1 つの仕様 (spec §6)。`parseConfig` と設定画面用スキーマ(`buildConfigSchema`)は
+ * どちらもこの表だけを見る(#10。二重管理しない)。既定値は `DEFAULTS` にある。
+ * - `live`: 設定画面から変えられ、保存するとプラグインを読み込み直さずに反映するキー
+ *   (スキーマで `.volatile()` にする。docs/spike.md「設定スキーマ」S2・S4)。
+ *   `stateFile` は状態ファイルの読み直しが要るので live にしない(YAML だけで変える。変えると再読み込み)。
+ */
+export type ConfigKeySpec =
+  | { readonly key: 'mode'; readonly kind: 'mode'; readonly live: true }
+  | { readonly key: IntegerKey; readonly kind: 'integer'; readonly min: number; readonly live: true }
+  | { readonly key: BooleanKey; readonly kind: 'boolean'; readonly live: true }
+  | { readonly key: 'stateFile'; readonly kind: 'string'; readonly live: false }
+
+/** 設定キーの一覧 (spec §6)。並びは検証の順序と設定画面の並び順。 */
+export const CONFIG_KEYS: readonly ConfigKeySpec[] = [
+  { key: 'mode', kind: 'mode', live: true },
+  { key: 'idleMinutes', kind: 'integer', min: 1, live: true },
+  { key: 'archiveAfterMinutes', kind: 'integer', min: 1, live: true },
+  { key: 'unlockTtlMinutes', kind: 'integer', min: 1, live: true },
+  { key: 'checkIntervalSeconds', kind: 'integer', min: 10, live: true },
+  { key: 'skipPinned', kind: 'boolean', live: true },
+  { key: 'archiveExisting', kind: 'boolean', live: true },
+  { key: 'maxPerCycle', kind: 'integer', min: 1, live: true },
+  { key: 'dryRun', kind: 'boolean', live: true },
+  { key: 'stateFile', kind: 'string', live: false },
+]
+
+/** stateFile は既定値を持たない(未指定なら呼び出し側が場所を決める)。 */
+const KNOWN_KEYS: ReadonlySet<string> = new Set(CONFIG_KEYS.map((spec) => spec.key))
 
 function readInteger(raw: Record<string, unknown>, key: string, min: number, m: Messages): number {
   const value = raw[key]
@@ -97,36 +129,43 @@ export function parseConfig(raw: unknown, locale: Locale): Config {
 
   const config: Config = { ...DEFAULTS }
 
-  if (obj.mode !== undefined) {
-    config.mode = readMode(obj, m)
-  }
-  if (obj.idleMinutes !== undefined) {
-    config.idleMinutes = readInteger(obj, 'idleMinutes', 1, m)
-  }
-  if (obj.archiveAfterMinutes !== undefined) {
-    config.archiveAfterMinutes = readInteger(obj, 'archiveAfterMinutes', 1, m)
-  }
-  if (obj.unlockTtlMinutes !== undefined) {
-    config.unlockTtlMinutes = readInteger(obj, 'unlockTtlMinutes', 1, m)
-  }
-  if (obj.checkIntervalSeconds !== undefined) {
-    config.checkIntervalSeconds = readInteger(obj, 'checkIntervalSeconds', 10, m)
-  }
-  if (obj.skipPinned !== undefined) {
-    config.skipPinned = readBoolean(obj, 'skipPinned', m)
-  }
-  if (obj.archiveExisting !== undefined) {
-    config.archiveExisting = readBoolean(obj, 'archiveExisting', m)
-  }
-  if (obj.maxPerCycle !== undefined) {
-    config.maxPerCycle = readInteger(obj, 'maxPerCycle', 1, m)
-  }
-  if (obj.dryRun !== undefined) {
-    config.dryRun = readBoolean(obj, 'dryRun', m)
-  }
-  if (obj.stateFile !== undefined) {
-    config.stateFile = readString(obj, 'stateFile', m)
+  for (const spec of CONFIG_KEYS) {
+    if (obj[spec.key] === undefined) continue
+    switch (spec.kind) {
+      case 'mode':
+        config.mode = readMode(obj, m)
+        break
+      case 'integer':
+        config[spec.key] = readInteger(obj, spec.key, spec.min, m)
+        break
+      case 'boolean':
+        config[spec.key] = readBoolean(obj, spec.key, m)
+        break
+      case 'string':
+        config.stateFile = readString(obj, spec.key, m)
+        break
+    }
   }
 
   return config
+}
+
+/**
+ * DSH が `apply` に渡す設定を、ふつうの値のオブジェクトに戻す (純粋関数)。
+ * スキーマで `.volatile()` にしたキーは、値ではなく `get()` で今の値を返す参照
+ * (`@deepseek-ai/cosmokit` の `Volatile`)として渡される(docs/spike.md S3)。
+ * 設定の値はすべてプリミティブなので、`get` 関数を持つオブジェクトを参照とみなして中身に置き換える。
+ * オブジェクト以外(undefined など)はそのまま返し、検証は `parseConfig` に任せる。
+ */
+export function plainConfig(raw: unknown): unknown {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return raw
+  const result: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(raw)) {
+    result[key] = isVolatileRef(value) ? value.get() : value
+  }
+  return result
+}
+
+function isVolatileRef(value: unknown): value is { get(): unknown } {
+  return typeof value === 'object' && value !== null && typeof (value as { get?: unknown }).get === 'function'
 }

@@ -1067,6 +1067,8 @@ spec.md §2 の lastResponseAt は、サブエージェントの fork の子に�
   `storage-json` の single レイアウトはファイル全体を atomic に置き換える
   (`$PK/dsh-storage-json/lib/types/atomic.d.ts:1-11`)。プロセス間の直列化は無いので**ロスト更新**になる。
 - この部分は cache-sentinel では防げない。README の Limitations に書いて利用者に委ねるのが #9 で選んだ方針。
+- 実機でも確かめた(DSH 0.2.2-alpha.2、`web` と `web2` の同時起動。[multi-profile-check.md](multi-profile-check.md))。
+  0.2.2-alpha.2 でも `dsh-workspace/lib/index.js` の行番号は同じ(`:383-384`・`:938-941`)。
 
 ---
 
@@ -1168,3 +1170,93 @@ spec.md §2 の lastResponseAt は、サブエージェントの fork の子に�
   ホバー・キーボードフォーカス・disabled は CDP で操作して確かめた。DSH の実画面(認証付きの URL)では未確認。
   入力カードの幅にそろえた後は、同じページで 1590px(明・暗)と 390px の両方について、警告・許可中・失敗の 3 状態とも、
   バナーと入力カードの左右の端の差が 0px であることを `getBoundingClientRect` で確かめた。
+
+---
+
+# 設定スキーマ (`export const Config`) と設定ページ (2026-11-02, DSH 0.2.2-alpha.2) — #10
+
+`$PK` = `<DSH のインストール先>/node_modules/@deepseek-ai`(0.2.2-alpha.2)。行番号は特記なければこの版のもの。
+古い版は `npm pack` で取り寄せて比べた(schemastery 3.18.4 / 3.18.5、cordis-plugin-loader 1.0.5 / 1.0.6、
+dsh-client-ui-primitives 0.2.0-rc.2 / 0.2.1-rc.5、dsh-client-ui-settings 0.2.0-rc.2 / 0.2.1-rc.5)。
+2026-10-23 の下調べ(依頼者の手元のブランチ `feat/issue-10-config-schema`、0.2.1-rc.2)の結論を今の版で確かめ直し、
+実装まで進めた。
+
+結論:
+- `@deepseek-ai/schemastery` は依存に足さず、DSH が実行時に提供するものを読み込む(S1)。
+- DSH の設定サービスが編集対象にするのは `.volatile()` のキーだけ(S2)。stateFile 以外を volatile にした。
+- volatile のキーは保存しても `apply` が呼び直されず、参照の中身が入れ替わって `loader/volatile-update` が届く(S3)。
+  これを受けて実行中の設定を差し替え、`checkIntervalSeconds` が変わったら interval を張り直す(S4)。
+- **DSH の Web UI は、スキーマからフォームを自動では作らない**(S5)。プラグイン画面の自分のページ
+  (`plugins.bundle.config`)にフォームを出す部品をクライアント半分で登録した。部品は DSH 公式の設定ページと同じもの。
+
+## S1: schemastery の読み込み — 確定(実機)
+- `@deepseek-ai/schemastery` は `@deepseek-ai/dsh` 自身の依存で、プラグインからの import は DSH の解決層が
+  宣言元(`@deepseek-ai/dsh`)の位置から解決し直す(下調べの Y3。`$PK/dsh-app-boot/lib/index.js` の `routeScoped`)。
+  ビルドは既に `external: ['@deepseek-ai/*']`(`scripts/build.ts`)なので、バンドルには入らない。
+- `src/config-schema.ts` はトップレベル await の `import('@deepseek-ai/schemastery')` で読み、失敗したら `undefined`
+  (このリポジトリのテスト・CI、DSH の外)。静的 import にしないのは、読めない環境でモジュールごと読み込めなくなるため。
+- 実機(DSH 0.2.2-alpha.2、`DSH_HOME` を一時ディレクトリにした web プロファイルに `npm pack` の tarball を
+  `dsh plugin --profile web add` で入れた)で、`Config` が作られ、設定ページに項目が出ることを確かめた(S5)。
+- 判定は `isNativeConfigSchema`(`$PK/dsh-app-boot/lib/index.js:2501`)。`Symbol.for` を使うので、
+  schemastery のコピーが複数あっても通る(下調べの Y1)。
+
+## S2: 設定サービスが編集対象にするキー — 確定
+- `SettingsForms#describe()`(`$PK/dsh-settings/lib/index.js:413`)は `entry.fiber.runtime.Config`(`:538`)を読み、
+  `volatileForm(schema)`(`:122`)が `undefined` の entry を飛ばす。`volatileForm` は `meta.volatile` のノードだけを集める。
+  書き込み(`write`、`:505` 付近)も volatile でないパスを `Config field "…" is not volatile` で拒否する。
+- README: 「Forms expose only volatile fields … Ordinary configuration remains editable through Cordis configuration files.」
+  (`$PK/dsh-settings/README.md:33`)。
+- `stateFile` は volatile にしない。変えると状態ファイルを読み直す必要があり、実行中に差し替える作りにしていない。
+  volatile でないキーが変わると loader は普通の再読み込み(`apply` のやり直し)をする(S3)ので、YAML で変えれば従来どおり効く。
+- 整数は `number().step(1).min(下限)`。schemastery の `natural()` も `number().step(1).min(0)`(`$PK/schemastery/lib/index.mjs:334`)。
+
+## S3: 保存したときの流れ — 確定(コードと実機)
+- 書き込みは `configEditor.edit` が候補を `fiber.resolveConfig(next)` で検証してからファイルに書く
+  (`$PK/dsh-config-editor/lib/index.js:82`。README「Writes validate the complete candidate before touching disk」)。
+  検証は cordis の `resolveConfig` が `Config["~standard"].validate` を呼ぶ(`$PK/cordis/lib/index.js:956`)。
+  → **スキーマで不正な値はファイルに書かれない**。
+- loader は volatile のキーだけが変わったとき(`$PK/cordis-plugin-loader/lib/index.js:450`)、再読み込みせず
+  `_commitVolatile`(`:463`)で実行中の参照の中身を差し替え、自分の fiber にだけ `loader/volatile-update`(`:490`)を出す。
+  型は `$PK/cordis-plugin-loader/lib/types/index.d.ts:29`(`'loader/volatile-update'(paths: readonly (readonly string[])[]): void`)。
+  README「Volatile configuration」(`$PK/cordis-plugin-loader/README.md:61`)。
+- volatile のノードは、値ではなく `get()` で今の値を返す参照(`createVolatile`)として `apply` に渡る
+  (`$PK/schemastery/lib/index.mjs:265`、型は `$PK/cosmokit/lib/types/volatile.d.ts` の `Volatile<T>`)。
+  なので `apply` は `plainConfig` で値に戻してから `parseConfig` を通す。
+- 同じ仕組み(`createVolatile`・`loader/volatile-update`)は schemastery 3.18.4 / 3.18.5、loader 1.0.5 / 1.0.6 にもある
+  (対応範囲の 0.2.0-rc.2〜0.2.1-rc.5 が使う版)。
+- schemastery の検証は未知のキーを通す(下調べの Y4)。未知キーの拒否と、エラー文面の表示言語は `parseConfig` に残した。
+  反映のときに `parseConfig` が失敗したら warn を出し、前の設定のまま動く。
+
+## S4: 実行中の設定の差し替え — 実装
+- `createRuntime` は設定を変数に持ち、`reconfigure(next)` で差し替える。入力禁止の部品(`createSentinel`)には
+  今の設定を読むビューを渡し、`unlockTtlMinutes` も呼ばれるたびに読むようにした。`/unlock` の許可・最終応答時刻など、
+  実行中に覚えている状態は持ち越す(再読み込みすると消える)。
+- モードがアーカイブしない → する、に変わったらすぐ 1 サイクル回す(`/sentinel` と同じ)。
+- `checkIntervalSeconds` が変わったら、`ctx.interval` が返す後始末で前の interval を止めてから張り直す。
+- 実機: 設定ページで `入力禁止までの分数` を 30、モードを both、dryRun を on にして保存すると、プロファイルの
+  `cordis.patch.yml` に `idleMinutes: 30` / `mode: both` / `dryRun: true` が書かれ、ログに
+  `[cache-sentinel] 設定を反映しました: 設定のモード both, 入力禁止 30 分, …, dryRun` が出た(再読み込みの「開始」は出ない)。
+
+## S5: 設定ページ — 確定(コードと実機)
+- DSH の Web UI には、スキーマからフォームを自動で作る画面は無い。`dsh-settings` の `describe()` は `autoGenerate` を返すが、
+  「no shipped client does so yet」(`$PK/dsh-settings/README.md:39`。0.2.1-rc.5 の README も同じ)。
+- プラグインの設定は、サイドバーの「プラグイン」画面に、プラグイン自身のクライアント半分が登録する
+  (`$PK/dsh-client-ui-plugin-manager/README.md`「Configuration pages」)。バンドル自身の設定は `plugins.bundle.config`
+  (キーはパッケージ名)で、バンドルのページの説明と行の間に出る(`$PK/dsh-client-ui-plugin-manager/lib/types/client/slot-contract.d.ts:153`)。
+- 公式の設定ページ(シェル・エージェントループ・Web 検索・サブエージェント)は、`configForms.get(エントリ id)` を
+  `@deepseek-ai/dsh-client-ui-primitives` の `SettingsFormModel` に渡し、`SettingsForm`・`SettingsValueField`・`Switch` で描く
+  (例: `$PK/dsh-client-ui-settings-shell/lib/client.js` の `ShellCardController`)。スロットの face の `hooks` に
+  `{ getSnapshot, subscribe }` を渡すと、部品側で `use<名前>` になる(`@deepseek-ai/dsh-client-ui-slots` の `InjectFace`)。
+  cache-sentinel も同じ作りにした(`src/client/settings-page.ts`)。primitives はシェルが提供する共有モジュールで、
+  0.2.0-rc.2 / 0.2.1-rc.5 も `SettingsForm`・`SettingsFormModel`・`SettingsValueField`・`SegmentedControl` を export している。
+- `configForms` は `@deepseek-ai/dsh-client-ui-settings` のサービス。必須の inject にするとそれが無い構成でバナーまで止まるので、
+  `ctx.inject(['configForms'], …)` の子で登録する。`whileServed`(0.2.0-rc.2 にもある)で、Host 側の entry が動いている間だけ出す。
+- 不正な入力(下限未満・整数以外)は、部品が欄を赤くして説明を出し、保存ボタンを押せなくする(実機で確認)。
+  部品を通さない書き込みも、Host がスキーマで拒否する(S3)。
+- 画面の確認は headless Chromium(1280×900、明るいテーマ、ja)で、一時の `DSH_HOME` の web プロファイルに入れて行った。
+  ユーザーの実際のプロファイル・暗いテーマ・Desktop では見ていない。
+
+## 未確認
+- `settings.configure({ auto: false }, fiber)`(自前のページを持つプラグインが、将来の自動フォームと二重にならないようにする口。
+  `$PK/dsh-settings/README.md:39`)は呼んでいない。今は自動フォームを作るクライアントが無いため。
+- 0.2.0-rc.2〜0.2.1-rc.5 の実機では動かしていない(上の版比較はコードのみ)。

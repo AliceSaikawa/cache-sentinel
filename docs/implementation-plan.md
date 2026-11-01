@@ -167,4 +167,4 @@
 | # | 内容 | Issue | 状態 |
 |---|---|---|---|
 | T38 | 表示言語(spec-ui.md §F)。`createRuntime` が渡した言語で `/sentinel`・`/unlock` を返す | #8(PR #21) | 完了 |
-| T39 | state.json のプロファイル別分離と移行(spec.md §C) | #9(PR #44) | 単体テストのみ。実機確認は rdsh-check.md の Desktop 7 |
+| T39 | state.json のプロファイル別分離と移行(spec.md §C) | #9(PR #44) | 完了。実機は web と web2 の同時起動で確認(multi-profile-check.md)。Desktop は未確認(rdsh-check.md の Desktop 7) |

@@ -13,7 +13,7 @@ For sessions where the prompt cache lifetime has passed, this plugin prevents ac
 - **Input blocking (`block`)**: Keeps the session open and readable while stopping the messages you send to the model. Work the agent is already doing (tool runs, jobs, subagents, goals, reminders) keeps going. When you want to continue sending, you can allow just the next send using the button above the input box or the `/unlock` command.
 - **Auto-archiving (`archive`)**: Automatically archives sessions that have not been updated for a while, hiding them from the sidebar so they cannot be opened.
 
-You can switch at any time from the chat `/sentinel` command to `both` mode, which combines both (input blocking after 60 minutes, archiving after 24 hours), or `off` mode, which temporarily disables the feature. (In the official Web UI, `/sentinel` with an argument currently cannot be run from the input box: [#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36).)
+You can switch at any time from the chat `/sentinel` command to `both` mode, which combines both (input blocking after 60 minutes, archiving after 24 hours), or `off` mode, which temporarily disables the feature.
 
 ## Installation
 
@@ -67,7 +67,6 @@ You can check the current status and switch modes from the chat input box.
 - `/sentinel`: Shows the current effective mode and its source (set via `/sentinel` / set in YAML), thresholds, elapsed minutes since the last response in this session, and `dryRun` status.
 - `/sentinel block` | `archive` | `both` | `off`: Switches the effective mode. It is saved to `$DSH_HOME/cache-sentinel/profiles/<profile>/state.json` (per profile) and preserved across DSH restarts (takes precedence over `mode` in YAML).
 - `/sentinel default`: Clears the mode saved via `/sentinel` and reverts to the `mode` setting in YAML.
-- Note: in the official Web UI, `/sentinel` with an argument (`block`, `archive`, `both`, `off`, `default`) currently cannot be run from the input box. It is sent as a normal message instead ([#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)). `/sentinel` without an argument and `/unlock` work. Until this is fixed, switch modes with `mode` in YAML.
 
 The argument is optional. After you type `/sentinel ` in the input box, the choices are shown as placeholder text until you type an argument.
 
@@ -97,7 +96,7 @@ The argument is optional. After you type `/sentinel ` in the input box, the choi
 
 ## Configuration
 
-You can change the settings in your profile's `cordis.patch.yml`. Omitted keys use their default values.
+You can change the settings on the plugin's page in the Web UI (sidebar **Plugins** → **cache-sentinel**), or in your profile's `cordis.patch.yml`. Omitted keys use their default values.
 
 ```yaml
 - id: cache-sentinel
@@ -114,7 +113,8 @@ You can change the settings in your profile's `cordis.patch.yml`. Omitted keys u
     # stateFile: /path/to/state.json # path to persistent state file (default: $DSH_HOME/cache-sentinel/profiles/<profile>/state.json)
 ```
 
-- Changes to `cordis.patch.yml` take effect without restarting DSH (the plugin is re-applied with the new settings, and in-memory `/unlock` permissions are cleared).
+- The plugin page shows every key except `stateFile`. **Save** writes the values to the profile's `cordis.patch.yml`; values that are out of range or not integers cannot be saved.
+- Changes take effect without restarting DSH. Keys other than `stateFile` are applied to the running plugin as they are (in-memory `/unlock` permissions are kept). Changing `stateFile` re-applies the plugin with the new settings, which clears in-memory `/unlock` permissions.
 - Specifying unknown keys or values with invalid types or ranges results in an error.
 
 ## How It Works
