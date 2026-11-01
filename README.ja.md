@@ -13,7 +13,7 @@ DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古い�
 - **入力禁止（`block`）**：セッションは開いて読めるまま、あなたの送信だけを止めます。エージェントが進めている作業（ツールの実行・ジョブ・サブエージェント・ゴール・リマインダー）は止めません。続けて送りたいときは、入力欄の上のボタンか `/unlock` コマンドで次の 1 回だけを許可できます。
 - **自動アーカイブ（`archive`）**：しばらく更新のないセッションを自動でアーカイブし、サイドバーから隠して開けないようにします。
 
-両方を組み合わせる `both` モード（60 分で入力禁止、24 時間でアーカイブ）や、一時的に機能を止める `off` モードへ、チャットの `/sentinel` コマンドからいつでも切り替えられます（公式 Web UI では、引数つきの `/sentinel` は現在入力欄から実行できません。[#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)）。
+両方を組み合わせる `both` モード（60 分で入力禁止、24 時間でアーカイブ）や、一時的に機能を止める `off` モードへ、チャットの `/sentinel` コマンドからいつでも切り替えられます。
 
 ## 導入
 
@@ -67,7 +67,6 @@ DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古い�
 - `/sentinel`：現在の実効モードとその出どころ（`/sentinel` で設定 / YAML の設定）、しきい値、このセッションの最終応答からの経過分、`dryRun` の状態を表示します。
 - `/sentinel block` | `archive` | `both` | `off`：実効モードを切り替えます。`$DSH_HOME/cache-sentinel/profiles/<プロファイル名>/state.json`（プロファイルごと）に保存され、DSH 再起動後も維持されます（YAML の `mode` より優先）。
 - `/sentinel default`：`/sentinel` で保存したモードを消去し、YAML の `mode` 設定に戻します。
-- 注意：公式 Web UI では、引数つきの `/sentinel`（`block`・`archive`・`both`・`off`・`default`）は現在入力欄から実行できず、普通のメッセージとして送られます（[#36](https://github.com/AliceSaikawa/cache-sentinel/issues/36)）。引数なしの `/sentinel` と `/unlock` は使えます。修正されるまでは、モードは YAML の `mode` で切り替えてください。
 
 引数は任意です。入力欄に `/sentinel ` と打つと、引数を入力するまで候補がプレースホルダとして表示されます。
 
