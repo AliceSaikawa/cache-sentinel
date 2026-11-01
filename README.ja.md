@@ -96,7 +96,7 @@ DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古い�
 
 ## 設定
 
-プロファイルの `cordis.patch.yml` で設定を変更できます。省略した項目には既定値が使われます。
+Web UI のプラグインのページ（サイドバーの「プラグイン」→「cache-sentinel」）か、プロファイルの `cordis.patch.yml` で設定を変更できます。省略した項目には既定値が使われます。
 
 ```yaml
 - id: cache-sentinel
@@ -113,7 +113,8 @@ DeepSeek Harness（DSH）で、プロンプトキャッシュが切れた古い�
     # stateFile: /path/to/state.json # 永続状態ファイルのパス(既定: $DSH_HOME/cache-sentinel/profiles/<プロファイル名>/state.json)
 ```
 
-- `cordis.patch.yml` の設定変更は DSH の再起動なしで反映されます（プラグインが新しい設定で再適用され、メモリ上の `/unlock` の許可は消えます）。
+- プラグインのページには `stateFile` 以外の項目が並びます。「保存」でプロファイルの `cordis.patch.yml` に書き込まれます。範囲外や整数でない値は保存できません。
+- 設定の変更は DSH の再起動なしで反映されます。`stateFile` 以外は動いているプラグインにそのまま反映されます（メモリ上の `/unlock` の許可は残ります）。`stateFile` を変えるとプラグインが新しい設定で再適用され、メモリ上の `/unlock` の許可は消えます。
 - 未知のキーや型・範囲が不正な値を指定した場合はエラーになります。
 
 ## 仕組み

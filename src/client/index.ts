@@ -8,6 +8,7 @@ import { resolveLocale, type Locale } from '../i18n.ts'
 import { bannerFor, unlockLabel, type Banner as BannerView, type StatusLike } from './banner.ts'
 import { fetchStatus } from './fetch-status.ts'
 import { runUnlock } from './run-unlock.ts'
+import { ENTRY_ID, PACKAGE_NAME, SettingsPage, SettingsPageController } from './settings-page.ts'
 
 export const name = 'cache-sentinel-client'
 /** `remote.commands` は `remote` とは別のサービスキーなので、両方を宣言する(docs/spike.md、#26)。 */
@@ -17,11 +18,22 @@ export const inject = ['slots', 'remote', 'remote.commands']
 export const POLL_MS = 30_000
 
 interface SlotsService {
-  inject(name: string, register: () => () => void): void
-  register(
-    options: { name: string; id: string; order: number; inject: (sessionId: string) => BannerProps },
-    component: (props: BannerProps) => unknown,
-  ): () => void
+  inject(name: string, register: () => () => void): (() => void) | void
+  register<P>(options: { name: string; id: string; order: number; inject: (sessionId: string) => P }, component: (props: never) => unknown): () => void
+  register<P>(options: { name: string; key: string; inject: () => P }, component: (props: never) => unknown): () => void
+}
+
+/** DSH の `configForms`(`@deepseek-ai/dsh-client-ui-settings` の `ConfigForms`)のうち使う部分。 */
+interface ConfigFormsService {
+  get(entryId: string): ConstructorParameters<typeof SettingsPageController>[0]
+  /** 0.2.1 以降にある。Host がその名前空間を出している間だけ登録を保つ。 */
+  whileServed?(namespaces: readonly string[], register: (served: ReadonlySet<string>) => () => void): () => void
+}
+
+/** cordis の ctx のうち、任意のサービスを待つ子プラグインを作る口と、後始末の口。 */
+interface PluginContext {
+  inject(deps: readonly string[], callback: (ctx: PluginContext & { configForms: ConfigFormsService }) => void): unknown
+  effect(execute: () => () => void, label?: string): unknown
 }
 
 interface RemoteService {
@@ -60,6 +72,29 @@ export function apply(ctx: unknown): void {
       Banner,
     ),
   )
+  registerSettingsPage(ctx as PluginContext, slots, locale)
+}
+
+/**
+ * プラグイン画面の cache-sentinel のページに設定フォームを出す (#10、docs/spike.md S5)。
+ * `configForms` は必須の inject にしない(無い環境でもバナーは動かす)。あるときだけ子プラグインで登録する。
+ */
+function registerSettingsPage(ctx: PluginContext, slots: SlotsService, locale: Locale): void {
+  ctx.inject(['configForms'], (child) => {
+    const controller = new SettingsPageController(child.configForms.get(ENTRY_ID), locale)
+    child.effect(() => () => controller.dispose(), 'cache-sentinel: settings form')
+    const register = (): (() => void) => {
+      const off = slots.inject('plugins.bundle.config', () =>
+        slots.register({ name: 'plugins.bundle.config', key: PACKAGE_NAME, inject: () => controller.face() }, SettingsPage),
+      )
+      return () => off?.()
+    }
+    const forms = child.configForms
+    child.effect(
+      () => (typeof forms.whileServed === 'function' ? forms.whileServed([ENTRY_ID], register) : register()),
+      'cache-sentinel: settings page',
+    )
+  })
 }
 
 /**

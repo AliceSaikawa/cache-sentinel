@@ -96,7 +96,7 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
 
 ## 设置
 
-可在配置文件的 `cordis.patch.yml` 中修改设置。省略的项将使用默认值。
+可在 Web UI 的插件页面（侧边栏「插件」→「cache-sentinel」）或配置文件的 `cordis.patch.yml` 中修改设置。省略的项将使用默认值。
 
 ```yaml
 - id: cache-sentinel
@@ -113,7 +113,8 @@ DeepSeek Harness（DSH）插件，用于防止误向提示缓存（Prompt Cache�
     # stateFile: /path/to/state.json # 持久化状态文件路径(默认: $DSH_HOME/cache-sentinel/profiles/<配置文件>/state.json)
 ```
 
-- `cordis.patch.yml` 的设置修改无需重启 DSH 即可生效（插件会以新设置重新应用，内存中的 `/unlock` 许可会被清除）。
+- 插件页面列出除 `stateFile` 以外的所有项。点击「保存」会写入配置文件的 `cordis.patch.yml`；超出范围或不是整数的值无法保存。
+- 设置修改无需重启 DSH 即可生效。`stateFile` 以外的项会直接应用到正在运行的插件（内存中的 `/unlock` 许可会保留）。修改 `stateFile` 时插件会以新设置重新应用，内存中的 `/unlock` 许可会被清除。
 - 指定未知键名或类型、范围无效的值时会报错。
 
 ## 工作原理

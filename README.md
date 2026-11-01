@@ -96,7 +96,7 @@ The argument is optional. After you type `/sentinel ` in the input box, the choi
 
 ## Configuration
 
-You can change the settings in your profile's `cordis.patch.yml`. Omitted keys use their default values.
+You can change the settings on the plugin's page in the Web UI (sidebar **Plugins** → **cache-sentinel**), or in your profile's `cordis.patch.yml`. Omitted keys use their default values.
 
 ```yaml
 - id: cache-sentinel
@@ -113,7 +113,8 @@ You can change the settings in your profile's `cordis.patch.yml`. Omitted keys u
     # stateFile: /path/to/state.json # path to persistent state file (default: $DSH_HOME/cache-sentinel/profiles/<profile>/state.json)
 ```
 
-- Changes to `cordis.patch.yml` take effect without restarting DSH (the plugin is re-applied with the new settings, and in-memory `/unlock` permissions are cleared).
+- The plugin page shows every key except `stateFile`. **Save** writes the values to the profile's `cordis.patch.yml`; values that are out of range or not integers cannot be saved.
+- Changes take effect without restarting DSH. Keys other than `stateFile` are applied to the running plugin as they are (in-memory `/unlock` permissions are kept). Changing `stateFile` re-applies the plugin with the new settings, which clears in-memory `/unlock` permissions.
 - Specifying unknown keys or values with invalid types or ranges results in an error.
 
 ## How It Works

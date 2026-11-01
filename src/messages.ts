@@ -6,7 +6,12 @@
  * 日本語は v0.5 までの文言と 1 文字も変えていない。
  */
 
+import type { Config } from './config.ts'
 import type { Locale } from './i18n.ts'
+import type { Mode } from './modes.ts'
+
+/** 設定ページで編集できるキー(stateFile 以外。src/config.ts の CONFIG_KEYS の live)。 */
+export type SettingsKey = Exclude<keyof Config, 'stateFile'>
 
 /** 表示言語ごとの文言。同じキーは 3 言語で同じ引数を取る。 */
 export interface Messages {
@@ -97,6 +102,32 @@ export interface Messages {
   readonly commandSentinelDescription: string
   /** `/sentinel` の引数のヒント(入力欄のプレースホルダ)。引数は任意。 */
   readonly commandSentinelInputHint: string
+
+  // --- 設定ページ (src/client/settings-page.ts、#10) ---
+  /** 各キーの見出し。 */
+  readonly settingsLabels: Readonly<Record<SettingsKey, string>>
+  /** 各キーの説明(見出しの下)。 */
+  readonly settingsHints: Readonly<Record<SettingsKey, string>>
+  /** モードの選択肢の表示名。 */
+  readonly settingsModeOptions: Readonly<Record<Mode, string>>
+  /** 整数の入力が不正なとき。 */
+  readonly settingsInvalidInteger: (min: number) => string
+  /** 既定から変えている印。 */
+  readonly settingsOverridden: string
+  /** 既定に戻すボタン。 */
+  readonly settingsReset: string
+  /** 設定が読み取り専用のとき。 */
+  readonly settingsReadOnly: string
+  /** Host 側が動いていなくて設定できないとき。 */
+  readonly settingsUnavailable: string
+  /** 保存ボタン。 */
+  readonly settingsSave: string
+  /** 保存中のボタン。 */
+  readonly settingsSaving: string
+  /** 保存が受け付けられなかったとき。 */
+  readonly settingsSaveFailed: string
+  /** stateFile はここでは変えられない旨。 */
+  readonly settingsStateFileNote: string
 }
 
 const en: Messages = {
@@ -153,6 +184,38 @@ const en: Messages = {
   commandSentinelDescription:
     'Show cache-sentinel status and switch mode: /sentinel [block|archive|both|off|default]',
   commandSentinelInputHint: '[block|archive|both|off|default]',
+  settingsLabels: {
+    mode: 'Mode',
+    idleMinutes: 'Minutes until sends are blocked',
+    archiveAfterMinutes: 'Minutes until archiving (both mode)',
+    unlockTtlMinutes: 'Minutes /unlock stays valid',
+    checkIntervalSeconds: 'Archive check interval (seconds)',
+    skipPinned: 'Do not archive pinned sessions',
+    archiveExisting: 'Also archive sessions that were already idle',
+    maxPerCycle: 'Sessions archived per check (max)',
+    dryRun: 'Dry run (log only)',
+  },
+  settingsHints: {
+    mode: 'block: block sends; archive: archive sessions; both: block, then archive later; off: do nothing. A mode chosen with /sentinel takes precedence (/sentinel default returns to this one).',
+    idleMinutes: 'Minutes since the last response. Also the archive threshold in archive mode. Integer, 1 or more.',
+    archiveAfterMinutes: 'Archive threshold in both mode. Integer, 1 or more.',
+    unlockTtlMinutes: 'How long an /unlock allowance lasts. Integer, 1 or more.',
+    checkIntervalSeconds: 'How often to look for sessions to archive. Integer, 10 or more.',
+    skipPinned: 'Pinned sessions are never archived.',
+    archiveExisting: 'Include sessions that stopped before archiving was first enabled.',
+    maxPerCycle: 'Upper limit per check. Integer, 1 or more.',
+    dryRun: 'Neither block nor archive; only write what would happen to the log.',
+  },
+  settingsModeOptions: { block: 'block', archive: 'archive', both: 'both', off: 'off' },
+  settingsInvalidInteger: (min) => `Enter an integer of ${min} or more, or leave blank to use the default.`,
+  settingsOverridden: 'Changed',
+  settingsReset: 'Reset to default',
+  settingsReadOnly: 'This deployment stores settings read-only.',
+  settingsUnavailable: 'cache-sentinel is not running, so it cannot be configured right now.',
+  settingsSave: 'Save',
+  settingsSaving: 'Saving…',
+  settingsSaveFailed: 'These values were not accepted; they are kept here for you to correct.',
+  settingsStateFileNote: 'The state file location (stateFile) is set in the profile patch, not here.',
 }
 
 const ja: Messages = {
@@ -209,6 +272,38 @@ const ja: Messages = {
   commandSentinelDescription:
     'cache-sentinel の状態表示とモード切り替え: /sentinel [block|archive|both|off|default]',
   commandSentinelInputHint: '[block|archive|both|off|default]',
+  settingsLabels: {
+    mode: 'モード',
+    idleMinutes: '入力禁止までの分数',
+    archiveAfterMinutes: 'アーカイブまでの分数(both モード)',
+    unlockTtlMinutes: '/unlock の有効時間(分)',
+    checkIntervalSeconds: 'アーカイブの確認間隔(秒)',
+    skipPinned: 'ピン留めしたセッションはアーカイブしない',
+    archiveExisting: '前から止まっていたセッションもアーカイブする',
+    maxPerCycle: '1 回にアーカイブする上限',
+    dryRun: 'ログだけ出す(dryRun)',
+  },
+  settingsHints: {
+    mode: 'block: 送信を止める / archive: アーカイブする / both: 送信を止め、さらに後でアーカイブ / off: 何もしない。/sentinel で選んだモードがあればそちらが優先されます(/sentinel default でここの値に戻ります)。',
+    idleMinutes: '最終応答からの分数。archive モードではアーカイブのしきい値にもなります。1 以上の整数。',
+    archiveAfterMinutes: 'both モードのアーカイブのしきい値。1 以上の整数。',
+    unlockTtlMinutes: '/unlock で許可した送信の有効時間。1 以上の整数。',
+    checkIntervalSeconds: 'アーカイブするセッションを探す間隔。10 以上の整数。',
+    skipPinned: 'ピン留めしたセッションはアーカイブしません。',
+    archiveExisting: 'アーカイブを初めて有効にする前に止まっていたセッションも対象にします。',
+    maxPerCycle: '1 回の確認でアーカイブする件数の上限。1 以上の整数。',
+    dryRun: '送信を止めず、アーカイブもせず、そうする予定だったことをログに出すだけにします。',
+  },
+  settingsModeOptions: { block: 'block', archive: 'archive', both: 'both', off: 'off' },
+  settingsInvalidInteger: (min) => `${min} 以上の整数を入力してください。空欄にすると既定値に戻ります。`,
+  settingsOverridden: '変更あり',
+  settingsReset: '既定値に戻す',
+  settingsReadOnly: 'この環境では設定は読み取り専用です。',
+  settingsUnavailable: 'cache-sentinel が動いていないため、いまは設定できません。',
+  settingsSave: '保存',
+  settingsSaving: '保存中…',
+  settingsSaveFailed: 'この値は受け付けられませんでした。直せるよう入力はそのまま残しています。',
+  settingsStateFileNote: '状態ファイルの場所(stateFile)は、ここではなくプロファイルの patch で設定します。',
 }
 
 const zhCN: Messages = {
@@ -265,6 +360,38 @@ const zhCN: Messages = {
   commandSentinelDescription:
     '显示 cache-sentinel 状态并切换模式：/sentinel [block|archive|both|off|default]',
   commandSentinelInputHint: '[block|archive|both|off|default]',
+  settingsLabels: {
+    mode: '模式',
+    idleMinutes: '禁止发送前的分钟数',
+    archiveAfterMinutes: '归档前的分钟数(both 模式)',
+    unlockTtlMinutes: '/unlock 的有效分钟数',
+    checkIntervalSeconds: '归档检查间隔(秒)',
+    skipPinned: '不归档已置顶的会话',
+    archiveExisting: '也归档此前已停止的会话',
+    maxPerCycle: '每次检查最多归档的会话数',
+    dryRun: '仅记录日志(dryRun)',
+  },
+  settingsHints: {
+    mode: 'block：禁止发送；archive：归档会话；both：禁止发送，之后再归档；off：不执行任何操作。若用 /sentinel 选择了模式，则以其为准(/sentinel default 可恢复为此处的值)。',
+    idleMinutes: '距上次响应的分钟数。在 archive 模式下也是归档阈值。不小于 1 的整数。',
+    archiveAfterMinutes: 'both 模式的归档阈值。不小于 1 的整数。',
+    unlockTtlMinutes: '/unlock 许可的有效时间。不小于 1 的整数。',
+    checkIntervalSeconds: '查找待归档会话的间隔。不小于 10 的整数。',
+    skipPinned: '已置顶的会话不会被归档。',
+    archiveExisting: '包括首次启用归档之前就已停止的会话。',
+    maxPerCycle: '每次检查归档的数量上限。不小于 1 的整数。',
+    dryRun: '既不禁止发送也不归档，只把将要执行的操作写入日志。',
+  },
+  settingsModeOptions: { block: 'block', archive: 'archive', both: 'both', off: 'off' },
+  settingsInvalidInteger: (min) => `请输入不小于 ${min} 的整数；留空则使用默认值。`,
+  settingsOverridden: '已修改',
+  settingsReset: '恢复默认',
+  settingsReadOnly: '本部署的设置为只读。',
+  settingsUnavailable: 'cache-sentinel 未运行，暂时无法设置。',
+  settingsSave: '保存',
+  settingsSaving: '保存中…',
+  settingsSaveFailed: '这些值未被接受，已保留供你修改。',
+  settingsStateFileNote: '状态文件的位置(stateFile)在配置文件的 patch 中设置，不在此处。',
 }
 
 /** 表示言語ごとの文言カタログ。 */
