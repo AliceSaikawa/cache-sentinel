@@ -50,7 +50,7 @@ test('icon は DSH が読める形式・大きさ(SVG / PNG / JPEG / WebP、256 
 })
 
 test('対応する DSH の版を peerDependencies で宣言している', () => {
-  assert.deepEqual(manifest.peerDependencies, { '@deepseek-ai/dsh': '>=0.2.0-rc.2 <=0.2.1-rc.3' })
+  assert.deepEqual(manifest.peerDependencies, { '@deepseek-ai/dsh': '>=0.2.0-rc.2 <=0.2.1-rc.5 || 0.2.2-alpha.2' })
 })
 
 test('engines.dsh を宣言していない(あると DSH は peerDependencies を見ずに engines.dsh だけで判定する)', () => {
@@ -60,9 +60,12 @@ test('engines.dsh を宣言していない(あると DSH は peerDependencies �
 test('README 3 言語に package.json と同じ対応範囲が書かれている', () => {
   const range = manifest.peerDependencies['@deepseek-ai/dsh']
   assert.ok(range, '@deepseek-ai/dsh の peer が無い')
-  const bounds = /^>=(\S+) <=(\S+)$/.exec(range)
+  // `>=下限 <=上限` か、間にある未確認の版を外すために `|| <版>` を続けた形(docs/spike.md K4)。
+  // 見出しは最初の下限から最後の版まで。
+  const bounds = /^>=(\S+) <=(\S+)(?: \|\| (\S+))?$/.exec(range)
   assert.ok(bounds, `範囲の形が想定外: ${range}`)
-  const [, lower, upper] = bounds
+  const [, lower, firstUpper, last] = bounds
+  const upper = last ?? firstUpper
   const headings: Record<string, string> = {
     'README.md': `**${lower} to ${upper}**`,
     'README.ja.md': `**${lower} 〜 ${upper}**`,

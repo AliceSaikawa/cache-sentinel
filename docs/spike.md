@@ -290,6 +290,132 @@ dsh-client-modules・dsh-base・dsh-web-app の 3 つで、他の 13 は `packag
   更新するとガードが外れる)を実機で確かめた。
 - 上限を 0.2.1-rc.3 にした tgz は免除なしで追加でき、起動ログ `[cache-sentinel] 開始 (モード block, …)` が出た。
 
+## rc.4・rc.5・0.2.2-alpha.2 の追加調査 (2026-11-01)
+
+対応範囲を 0.2.2-alpha.2 まで広げる根拠。`node scripts/dsh-compat.ts <作業ディレクトリ> 0.2.1-rc.3 0.2.1-rc.4 0.2.1-rc.5 0.2.2-alpha.2`
+を実行した(38 パッケージ、missing 0)。この調査では実機を動かしていない(実機での確認は PR に手順を書いて人に任せた)。
+npm の公開日は rc.4 が 10-26、0.2.2-alpha.2 が 10-27、rc.5 が 10-29 で、0.2.2-alpha.2 は 0.2.1 系とは別の流れの版
+(rc.4・rc.5 の変更の一部を含まない)。そのため 3 つとも rc.3 と比べた。行番号は特記なければ各版のもの。
+
+### rc.4・rc.5
+
+diff は rc.4 が dsh-client-modules・dsh-client-ui-conversation の 2 つ、rc.5 はそれに dsh-client-ui-chat を足した 3 つで、
+他は rc.3 と同一。
+- dsh-client-modules: `lib/index.js:540` の `const commit` だけ(rc.4 `"ec17a2c"`、rc.5 `"d4db512"`)。
+- dsh-client-ui-conversation(rc.4 で変わり、rc.5 は rc.4 と同一): ビューのタブのラベルに、はみ出すときだけツールチップを出す
+  `ViewTabLabel`(`lib/client.js:18082-18105`)と、文言キー `session.moreViewsCurrent` の削除(`locales.d.ts`)。
+  変更箇所は `conversation.input.dock` を描く `composerStack`(rc.3 の `:17909`)より後ろで、dock・入力カード・コマンドの受け側には触れない。
+- dsh-client-ui-chat(rc.5): モデルの推論の表示から `<signature>…</signature>` を除く `reasoningText`(`lib/client.js:6106-6128`)と、
+  推論の Body Slot に `rawText` を渡す変更(`contract/slots.d.ts`、`ReasoningRow.d.ts`、`ReasoningContent.d.ts`)。
+  コマンドの行(`command/run`・`command/done`)の描画と、turn を持たないノードの置き場所には触れない。
+
+項目 1〜13 はすべて rc.3 と同じ。
+
+### 0.2.2-alpha.2
+
+38 パッケージ中 37 が diff(同一は dsh-client-ui-slots だけ)。多くのパッケージに `locale/{de,es,fr,ja,pt,ru}.json` が足され、
+モデル選択(`agent.model`・`model/selection` イベント)、セッションの projection、セッションを store に入れて知らせる順序の整理などが
+入っている。ほかに `@deepseek-ai/dsh` の依存の cordis が `~4.0.5` から `~4.0.6-alpha.1` に、cordis-plugin-timer が `~1.1.7` から
+`~1.1.8-alpha.1` に上がり、`engines.node` が `>=24.9.0` になった(`dsh/package.json:179-181`)。cordis と timer は
+`scripts/dsh-compat.ts` の対象外なので、`npm pack` して別に比べた。
+
+| 項目 | 0.2.2-alpha.2 |
+|---|---|
+| 1 `agent/pre-step` | 変更あり・互換。payload に `modelSelection` が増えただけ。reject で `blocked` で終わり、prepend の扱いも同じ |
+| 2 Session / command イベント | 変更あり・互換。使うメソッドと header の項目は同じ。`command/run`・`command/done` の形は同じ |
+| 3 `commands.register` | 変更なし(dsh-commands の型は同一。差分は型カタログ `typert.host.js` と辞書だけ) |
+| 4 `workspaceRegistry` / `sessionPersistence.list()` | 変更あり・互換。dsh-workspace は辞書以外同一。`list()` の結果に任意の `location` が増えた |
+| 5 `connection.fetch.register` | 変更なし(dsh-client-connection の `lib/index.js` と `rpc.d.ts` は同一) |
+| 6 セッションログの配置 | 変更なし(`encodeSegment`・ファイル名・版は同じ。差分は `location` と Node 22 の記述) |
+| 7 クライアント(`dsh.client`・`conversation.input.dock`・`remote.commands.execute`) | 変更あり・互換(下記) |
+| 8 バンドルの提供サービス | 変更なし。行の追加・削除はあるが、使う 6 つのサービスの行は同じ |
+| 9 入力の出どころ `source.kind`・`form`(P2・N1) | 変更あり・互換。新しい出どころ `action-cards` が増えた(`user` ではないので「ユーザーの送信以外」) |
+| 10 サブエージェントの子(R1〜R4) | 変更なし(子の header の作り方は同じ) |
+| 11 入力欄からのコマンド実行(Y2)と `remote.commands`(#26) | 変更あり・互換(下記) |
+| 12 バナーの描画(dock の位置・CSS 変数・トークン) | 変更なし(値は同一。下記) |
+| 13 対応版の評価(K1・K2) | 変更あり・互換。評価の関数は同じ。`dsh.bundle.platforms` が増えたが、書かなければすべての OS で読み込む |
+| 14 フォークしたセッションの `parentSession`(archive の対象判定) | **挙動が変わる**(下記) |
+
+1〜14 の根拠(`$PK` = 0.2.2-alpha.2 の `node_modules/@deepseek-ai`):
+1. pre-step: payload は `$PK/dsh-agent/lib/types/runtime-types.d.ts:332-339`(`modelSelection` が `:338` に増えた)。
+   `PreStepDecision` は `:117-124`、`AgentStatus` は `:115`、`agent/status` は `:279-281` で、形は rc.3 と同じ。
+   ループは `$PK/dsh-agent-loop/lib/index.js:666-718`(`preStep`。waterfall は `:685`、reject はそのまま返す `:699-702`)、
+   `:746-748`(reject で `turnEnds = { kind: "blocked" }`)、`:819`(`turn/end`)。`step/end` は `finally` で書く(`:781`)のも同じ。
+   `agent/status` は `setPhase`(`:558-563`)から出る。新しい `maintenance` の phase は `status` では `idle` 扱い(`:554-556`)なので、
+   Q2(idle は blocked の `turn/end` の後)と Q6(running は pre-step より前、`:625-631`)は変わらない。
+   prepend の pre-step リスナーは dsh-agent の `installModelSelection`(`$PK/dsh-agent/lib/index.js:231-243`。エージェントごとの ctx)と
+   dsh-session-reference(`index.js:458-465`)で、どちらも先に `next()` を呼び、reject はそのまま返す。前者は reject でないときに
+   モデル切り替えの通知を足すだけ。自動圧縮(`$PK/dsh-compaction-basic/lib/index.js:839-851`)は rc.3 と同じ行・同じ中身で prepend なし。
+   cordis 4.0.6-alpha.1 の prepend は `lib/index.js:336` の unshift のままで、4.0.5 との差分は config の読み書きの API の整理だけ。
+2. Session: `snapshotEvents` は `$PK/dsh-session/lib/types/index.d.ts:228`、`ownEvents` は `:235`、`append` は `:286`、
+   `session/event` は `:63`。header の `createdAt`・`isSeeded`・`origin` は `types.d.ts:68,81,86`。
+   `append` は、store が持つセッションでは作成の通知が終わるまでと、store から外した後に throw するようになった(`index.d.ts:251-253`)。
+   cache-sentinel が書くのは `agent/status` の idle の後なので通知は終わっている。失敗しても warn にして落ちない(`src/block.ts`)。
+   `command/run`・`command/done` の形は dsh-commands の `types.d.ts` が rc.3 と同一。
+3. commands: `$PK/dsh-commands/lib/types/*.d.ts` が同一(`input` の `CommandInputDescriptor` も同じ)。
+4. workspace: `$PK/dsh-workspace` は `locale/` 以外同一(`archivedSessionIds`・`pinnedSessionIds`・`archiveSession`、エラー型)。
+   `$PK/dsh-session-persistence/lib/types/index.d.ts:34-39` に任意の `location` が増えた。cache-sentinel は読まない。
+5. connection: `$PK/dsh-client-connection/lib/index.js` と `lib/types/rpc.d.ts` が rc.3 と同一(差分はクライアント側の型の `resolveAsset` だけ)。
+   exact route は owner 以外の Peer に 403 を返す(`lib/index.js:830`、rc.1 の項目 5 と同じ)。0.2.2-alpha.2 では実験的な
+   dsh-experimental-liveshare が `share-viewer` の principal を足す(`$PK/dsh-experimental-liveshare/lib/types/host/viewer-principal.d.ts`)ので、
+   共有を見ている人からの状態取得 API は 403 になる。owner のブラウザは従来どおり。
+6. ログ配置: `$PK/dsh-session-persistence-jsonl/lib/index.js` の差分は `list()` の `location` と、コメントの Node の版だけ。
+   `encodeSegment`(`:858`)、`session.v4.jsonl[.zstd]` は同じ。
+7. クライアント: `dsh.client` の解析(`$PK/dsh-client-modules/lib/index.js:86-100`、`client.js:61-75`)と行の組み立て(`index.js:458-466`)は
+   rc.3 と同じ中身。inject の先行読み込みは `client.js:791-794`。変わったのは、`package.json` を毎回読み直すこと(`index.js:781-800`)と、
+   パッケージの asset の route(`:229`、`:1040-1080`)の追加で、cache-sentinel は使わない。
+8. バンドル: `$PK/dsh-base/cordis.patch.yml` は `tool-executor-native`・`tool-executor-ptc`(無効)の行が増え、
+   `tool-subagent-list-agents` の行が消えた。`$PK/dsh-web-app/cordis.patch.yml` は `message-quotes`(`:324`)・`ui-file-drag`(`:337`)・
+   `deliverable-file-references`(`:347`)の行が増え、`ui-deepseek-model-label-1017` の行が消えた。`workspaceRegistry`・`connection`・
+   `timer`・`sessions`・`sessionPersistence`・`commands` の行は変わらない。timer(cordis-plugin-timer 1.1.8-alpha.1)の差分は
+   `interval` を反復子として読むときの待ち行列だけで、`ctx.interval(callback, delay)` の形は同じ。
+9. 出どころ: dsh-commands の型カタログ(`$PK/dsh-commands/lib/typert.host.js` の `MessageSourceMap`)で、増えたのは
+   `'action-cards': { kind: 'action-cards'; through: SessionSeq } & ContextFormed` だけ。これを足すのは dsh-action-cards の
+   pre-step リスナー(`$PK/dsh-action-cards/lib/index.js:394-417`。prepend なしなので cache-sentinel より内側)。
+   `kind: "user"` を書くファイルの集合は、比べた 38 パッケージで rc.3 と同じ。ユーザーの送信は従来どおり
+   `$PK/dsh-api-session-controller/lib/index.js:4048-4053` の `kind: "user"`。
+10. サブエージェント: 子の header は `$PK/dsh-subagent/lib/index.js:347-356`(`childSessionMeta`。`parentSession`・`isSeeded`・
+    `origin: "subagent"`)で rc.3 と同じ。dsh-subagent-fork-in-process・dsh-subagent-spawn-in-process は同一。
+    差分は完了通知の文面(`omitClosingText`)と projection の登録の仕方。
+11. 入力欄からのコマンド実行: `matchEnter` と `input` の検査(`$PK/dsh-client-ui-commands/lib/client.js:1791`、`:1810-1857`)、
+    input-trigger の `leading`(`$PK/dsh-client-ui-input-trigger/lib/client.js:785,803,1227`)は rc.3 と同じ中身。
+    会話欄の受け側 `argsAfter`(`$PK/dsh-client-ui-conversation/lib/client.js:5273-5282`)と `SubmitMachine.onAdjudicated`(`:5394-5411`)も
+    分岐は同じ。通常の送信は、Host が受け取るまで入力欄を編集できない `sending` の段階を通るようになった(`:5352-5366`)。
+    ブロックは Host が受け取った後の pre-step で起きるので、この段階には関係しない。
+    `remote.commands.execute` の型(`remotes.d.ts:14-16`)と `RemoteResult`(`$PK/dsh-typert-protocol/lib/types/types.d.ts:100-116`)は同じ。
+12. バナー: `conversation.input.dock` の契約(`$PK/dsh-client-ui-conversation/lib/types/client/contract/slots.d.ts:324-328`)、
+    `composerStack` の中で入力カードの直前に dock を描くこと(`lib/client.js:20524`)、`--dsh-composer-card-max-width`・
+    `--dsh-composer-side-clearance`・`--dsh-composer-dock-inset`(`:20001`)、入力カードの幅の CSS(`:21637`)は値が同じ。
+    入力カードの CSS の差分は、`pointer: coarse` のときの文字の大きさと、`:hover` を `@media (hover: hover)` で囲んだことだけ。
+    バナーが使う `--dsw-*` のトークンは明・暗とも同じ値(`$PK/dsh-client-ui-theme/lib/client.js:1470,1473`)。
+    コマンドの行と turn を持たないノードの置き場所(`$PK/dsh-client-ui-chat/lib/client.js:13694-13703`)、`alwaysOpen`(`:4890`。
+    `blocked` は入らない)も同じ。
+13. 対応版の評価: `$PK/dsh-app-boot/lib/index.js:398-400`(`satisfies(…, { includePrerelease: true })`)と `:433`
+    (`evaluatePluginCompatibility`)は rc.3 と同じ中身。バンドルの評価は `:1110`、スキップの stderr は `:660`。
+    dsh-plugin-manager も追加時・更新時に同じ関数を呼ぶ(`lib/index.js:699,821,2213,2409,2506,2823,3036`)。
+    新しい `dsh.bundle.platforms`(`assertBundlePlatform`、`dsh-app-boot/lib/index.js:367-371`)は、書かなければすべての OS を許す。
+    cache-sentinel は書いていない。プロファイル名(Z1)は `$PK/../../lib/profile-boot-e2mS45fC.js:291-305` で、`name` を
+    `profileContext` として provide するのは同じ。
+14. フォークの `parentSession`: rc.3 では、会話画面からのフォーク(dsh-api-session-controller の `fork`、`lib/types/commands.js:264`)
+    と `SessionStore.fork`(`dsh-session/lib/index.js:2017`)が、子の header に `parentSession: <フォーク元>` を書いていた。
+    0.2.2-alpha.2 ではどちらも書かない(`$PK/dsh-api-session-controller/lib/types/commands.js:256-262`、`$PK/dsh-session/lib/index.js:2034-2037`)。
+    型の説明も「Direct creator of a subagent Session. Ordinary forks omit this field; historical ordinary forks may retain
+    their source id here.」になった(`$PK/dsh-session/lib/types/types.d.ts:72-76`)。サブエージェントの子は従来どおり書く(項目 10)。
+    cache-sentinel のアーカイブは `origin === 'subagent'` か `parentSession` があるセッションを対象外にする(`src/decide.ts:54-55`、
+    archive-spec §3 の 1)。そのため 0.2.2-alpha.2 で会話画面からフォークしたセッションは、`archive`・`both` モードでほかの
+    トップレベルのセッションと同じくアーカイブの対象になる。rc.3 までに作ったフォークは `parentSession` を持つので対象外のまま。
+    入力禁止は `parentSession` を見ない(`origin` と `isSeeded` だけ。spec §2)ので変わらない。
+    DSH 側でも、通常のフォークはフォーク元から独立したセッションとして扱う(サイドバーの親子は `origin === 'subagent'` だけで組む:
+    `$PK/dsh-api-session-controller/lib/types/client/sessions/lineage.js:19`)。仕様(archive-spec §3)の文言には合っているので、
+    コードは変えていない。フォークを対象外にしたい場合は仕様の変更になる。
+
+壊れる箇所は rc.4・rc.5・0.2.2-alpha.2 のいずれでも見つからなかった。挙動の違いは項目 14 の 1 つ。
+
+宣言は `>=0.2.0-rc.2 <=0.2.1-rc.5 || 0.2.2-alpha.2` にした(K4)。0.2.0-rc.2・0.2.1-rc.1・0.2.1-rc.3・0.2.1-rc.5・0.2.2-alpha.2 の
+`dsh-app-boot` の `evaluatePluginCompatibility(manifest, {}, <版>)` を直接呼んだ結果は 5 つとも同じで、範囲内は 0.2.0-rc.2・
+0.2.1-alpha.1・0.2.1-alpha.5・0.2.1-rc.1〜rc.5・0.2.2-alpha.2、範囲外は 0.2.0-rc.1・0.2.1-rc.6・0.2.1・0.2.2-alpha.0・
+0.2.2-alpha.1・0.2.2-alpha.3・0.2.2・0.3.0。どの版の関数でも、その版自身(既定の runtime 版)は範囲内。
+
 ---
 
 # 対応 DSH 版の宣言とその評価 (2026-10-23, DSH 0.2.1-rc.2) — Issue #31
@@ -366,30 +492,37 @@ dsh-client-modules・dsh-base・dsh-web-app の 3 つで、他の 13 は `packag
 
 ## K4: 宣言する範囲 — 確定
 
-`peerDependencies` に `"@deepseek-ai/dsh": ">=0.2.0-rc.2 <=0.2.1-rc.3"` を書く(`engines.dsh` は使わない。
+`peerDependencies` に `"@deepseek-ai/dsh": ">=0.2.0-rc.2 <=0.2.1-rc.5 || 0.2.2-alpha.2"` を書く(`engines.dsh` は使わない。
 K3 のとおり公式の前例が無く、`engines.dsh` を書くと peer を書いても無視されるため、片方に絞る)。
 
-現行版と同じ semver(`$PK/../semver/index.js`、7.8.5)の `satisfies(v, range, { includePrerelease: true })` で
-評価した結果(2026-10-26 時点。上限を rc.3 に広げたときの再評価は「rc.3 の追加調査」):
+現行版と同じ semver の `satisfies(v, range, { includePrerelease: true })` で評価した結果(2026-11-01 時点。
+0.2.0-rc.2・0.2.1-rc.1・0.2.1-rc.3・0.2.1-rc.5・0.2.2-alpha.2 の `evaluatePluginCompatibility` で同じ結果。
+「rc.4・rc.5・0.2.2-alpha.2 の追加調査」):
 
 | DSH の版 | 範囲内か |
 |---|---|
 | 0.2.0-rc.1(以前) | 範囲外 |
 | 0.2.0-rc.2 | 範囲内 |
 | 0.2.1-alpha.1〜alpha.5 | 範囲内 |
-| 0.2.1-rc.1 | 範囲内 |
-| 0.2.1-rc.2 | 範囲内 |
-| 0.2.1-rc.3 | 範囲内 |
-| 0.2.1-rc.4 | 範囲外 |
-| 0.2.1(正式版) | 範囲外 |
-| 0.2.2 / 0.3.0 | 範囲外 |
+| 0.2.1-rc.1〜rc.5 | 範囲内 |
+| 0.2.1-rc.6(未リリース) | 範囲外 |
+| 0.2.1(正式版、未リリース) | 範囲外 |
+| 0.2.2-alpha.0・alpha.1(npm に無い) | 範囲外 |
+| 0.2.2-alpha.2 | 範囲内 |
+| 0.2.2-alpha.3 / 0.2.2 / 0.3.0 | 範囲外 |
 
-- `<=0.2.1-rc.3` は semver の順序で「0.2.1-rc.3 まで」を意味し、`0.2.1-rc.4` と `0.2.1` は入らない。
-  一方 `0.2.0-rc.2` 〜 `0.2.1-rc.3` の間にある prerelease はすべて入る(0.2.1-alpha.1〜alpha.5 を含む)。
-  実機で確認していない alpha 系が範囲に入るのは、Issue #12 の対応範囲(README の記載)と同じ考え方。
-- 検討した別案: `<0.2.1` は 0.2.1-rc.3 が入るため不可。`^0.2.1-rc.2` は 0.2.0-rc.2 と alpha 系が入らないため不可。
+- `>=0.2.0-rc.2 <=0.2.1-rc.5` は semver の順序で「0.2.0-rc.2 から 0.2.1-rc.5 まで」を意味し、その間の prerelease は
+  すべて入る(0.2.1-alpha.1〜alpha.5 を含む)。実機で確認していない alpha 系が範囲に入るのは、Issue #12 の対応範囲
+  (README の記載)と同じ考え方。
+- semver の順序は `0.2.1-rc.5 < 0.2.1 < 0.2.2-alpha.0 < 0.2.2-alpha.2` なので、`<=0.2.2-alpha.2` と 1 つの区間で書くと
+  正式版 0.2.1 と、これから出る 0.2.1 の rc も範囲に入る。0.2.2-alpha.2 は 0.2.1 系とは別の流れの版で、間の版を
+  確かめたことにはならないため、`|| 0.2.2-alpha.2` で 0.2.2-alpha.2 だけを足す。
+- 検討した別案: `>=0.2.0-rc.2 <=0.2.2-alpha.2` は上のとおり未確認の版が入るため不可。`<0.2.1` は 0.2.2-alpha.2 が入らないため不可。
   `>=0.2.0-rc.2` だけでは 0.2.2 以降も入るため不可。
-- 正式版 `0.2.1` は範囲に入れない(2026-10-26 時点で未リリース。入れると未確認の版を許可することになる)。
+- 正式版 `0.2.1` は範囲に入れない(2026-11-01 時点で未リリース。入れると未確認の版を許可することになる)。
+- 0.2.2 系の次の版に広げるときは、後ろの区間を `|| >=0.2.2-alpha.2 <=<新しい版>` にする。README 3 言語の見出しが
+  宣言と一致するかのテスト(`tests/package.test.ts`)は、`>=下限 <=上限` と、その後ろに `|| <版>` を 1 つ続けた形を読む。
+  別の形にするときはテストも合わせる。
 
 ## K5: 宣言の副作用 — 確定(注意点)
 
@@ -397,7 +530,7 @@ K3 のとおり公式の前例が無く、`engines.dsh` を書くと peer を書
   起動時はバンドル単位でスキップされ(Host もクライアントも読み込まれない)、起動自体は続く。
   インストール時は pnpm を動かす前に拒否される。免除は `compatibility.json` に完全一致の版の組で書く必要があり、
   範囲では免除できない。
-- 上限を固定しているので、DSH を未対応の版(例: 0.2.1-rc.4 や 0.2.1 正式版)に更新した時点で cache-sentinel は自動でスキップされ、
+- 上限を固定しているので、DSH を未対応の版(例: 0.2.1-rc.6 や 0.2.1 正式版、0.2.2-alpha.3)に更新した時点で cache-sentinel は自動でスキップされ、
   入力禁止などのガードが外れる(fail-open)。気づく手がかりは起動時の stderr の `skipping profile bundle` だけ。
   Issue #31 の意図どおり(未確認の版では動かさない)だが、新しい版が出たら K6 の手順で範囲を見直す。
   rc.3 では、上限が rc.2 の cache-sentinel が追加時に拒否され、起動時にスキップされることを実機で確かめた
@@ -409,10 +542,11 @@ K3 のとおり公式の前例が無く、`engines.dsh` を書くと peer を書
 
 1. 互換調査: `node scripts/dsh-compat.ts <作業ディレクトリ> <範囲の上限の版> <新しい版>` で、cache-sentinel が使う
    パッケージの差分を取る(使い方は README の Development 節)。差分があれば、上の「DSH 0.2.1 系との互換調査」の
-   項目 1〜8 と「rc.3 の追加調査」の項目 9〜13 に照らして影響を調べ、この文書に追記する。壊れる箇所があれば、
+   項目 1〜8 と「rc.3 の追加調査」の項目 9〜13、「rc.4・rc.5・0.2.2-alpha.2 の追加調査」の項目 14 に照らして影響を調べ、この文書に追記する。壊れる箇所があれば、
    範囲を広げる前に直す。cache-sentinel が新しいパッケージに依存したときは、`scripts/dsh-compat.ts` の `PACKAGES` にも足す。
 2. 宣言の更新: `package.json` の `peerDependencies` の上限(`<=<版>`)を新しい版にする。正式版や次の minor に
-   広げる場合は、K4 の表のように範囲内・範囲外の版を挙げて `satisfies` の結果を確かめる。
+   広げる場合や、別の流れの版(0.2.2-alpha.2 のような)を足す場合は、K4 の表のように範囲内・範囲外の版を挙げて
+   `satisfies` の結果を確かめ、間にある未確認の版が入らない形にする(K4)。
 3. テストの更新: `tests/package.test.ts` の宣言の値を新しい範囲にする。README 3 言語に同じ範囲が書かれているかも
    同じファイルのテストで確かめている。
 4. README 3 言語の「Supported Versions and Environment」を更新する: 見出しの範囲、宣言の値、新しい版を
