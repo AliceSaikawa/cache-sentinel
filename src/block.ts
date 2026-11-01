@@ -121,6 +121,7 @@ function sessionViewOf(session: SessionLike): SessionView {
 
 /**
  * 設定・ロガー・表示言語・時計・有効判定から入力禁止の部品を作る。
+ * `config` の各項目は使うたびに読む(呼び出し側が今の設定を返すオブジェクトを渡せる。#10)。
  * 最終応答時刻は、そのとき手元にある Session のイベント列から初回だけ読み、以後は session/event で更新する。
  * 会話に書き込むブロック通知は `locale` (プロセスで 1 回決める。spec-ui v0.5 §F) で作る。
  */
@@ -141,7 +142,8 @@ export function createSentinel(
   const unlocks = new UnlockStore()
   const dedupe = new NoticeDedupe(NOTICE_DEDUPE_INTERVAL_MS)
   const pending = new PendingNotices()
-  const ttlMs = config.unlockTtlMinutes * 60_000
+  // 設定は呼ばれるたびに読む(設定画面からの変更を読み込み直さずに反映するため。#10)。
+  const ttlMs = (): number => config.unlockTtlMinutes * 60_000
   let noticeCounter = 0
 
   /**
@@ -197,7 +199,7 @@ export function createSentinel(
       let stepKind: StepKind
       try {
         const at = now()
-        unlocks.prune(at, ttlMs)
+        unlocks.prune(at, ttlMs())
         dedupe.prune(at)
         sourceKinds = payload.messages.map((message) => message.source?.kind ?? '(source なし)')
         stepKind = classifyStep(payload.step, sourceKinds)
@@ -293,7 +295,7 @@ export function createSentinel(
 
     statusOf(session, mode) {
       const at = now()
-      unlocks.prune(at, ttlMs)
+      unlocks.prune(at, ttlMs())
       return computeStatus({
         mode,
         gate: isActive(),

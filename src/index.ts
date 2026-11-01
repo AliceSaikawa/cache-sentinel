@@ -13,13 +13,14 @@ import { createDeps, resolveHome, type ArchiveServices } from './archive.ts'
 import {
   createSentinel,
   type AgentLike,
+  type BlockSettings,
   type AgentStatus,
   type CommandResult,
   type PreStepDecision,
   type PreStepPayload,
   type SessionLike,
 } from './block.ts'
-import { parseConfig, type Config } from './config.ts'
+import { parseConfig, plainConfig, type Config } from './config.ts'
 import { runCycle, type CycleDeps } from './cycle.ts'
 import { resolveLocale, type Locale } from './i18n.ts'
 import type { TimedEvent } from './last-response.ts'
@@ -42,6 +43,12 @@ import type { StatusPayload } from './status.ts'
 export const name = 'cache-sentinel'
 export const inject = ['commands', 'workspaceRegistry', 'sessionPersistence', 'sessions', 'timer', 'connection']
 
+/**
+ * 設定のスキーマ (#10)。DSH はこれで YAML の値を検証し、設定画面(プラグインのページ)の編集対象を決める。
+ * DSH の外では undefined(docs/spike.md「設定スキーマ」S1)。
+ */
+export { ConfigSchema as Config } from './config-schema.ts'
+
 /** 送信前表示のための状態の取得口(spec-ui.md §E1)。 */
 export const STATUS_PATH = '/api/cache-sentinel.status'
 
@@ -55,6 +62,12 @@ export interface HostContext extends ArchiveServices {
     options: { prepend: boolean },
   ): () => boolean
   on(name: 'session/event', listener: (session: SessionLike, event: TimedEvent) => void): () => boolean
+  /**
+   * 設定画面などで volatile なキーだけが変わり、プラグインを読み込み直さずに新しい値が入ったとき。
+   * 型は `@deepseek-ai/cordis-plugin-loader` の `'loader/volatile-update'`(payload は変わったキーのパスの配列)。
+   * 自分の fiber にだけ届く(docs/spike.md S3)。
+   */
+  on(name: 'loader/volatile-update', listener: (paths: readonly (readonly string[])[]) => void): () => boolean
   /**
    * エージェントの状態遷移(idle ⇄ running)。
    * 型は `@deepseek-ai/dsh-agent` の `runtime-types.d.ts` の `'agent/status'`(payload は `{ agent, status }`)。
@@ -170,16 +183,25 @@ export interface Runtime {
   tick(): Promise<void>
   /** 状態の取得口の中身。session が undefined なら読み込まれていないセッション。 */
   status(session: SessionLike | undefined): StatusPayload
+  /**
+   * 設定を差し替える(設定画面で保存したとき。#10)。以後の判定・アーカイブ・`/sentinel` の表示は新しい設定で行う。
+   * 拒否の許可(/unlock)や最終応答時刻など、実行中に覚えている状態は持ち越す。
+   * モードがアーカイブしない → する、に変わったらすぐ 1 サイクル回す(`/sentinel` と同じ)。
+   */
+  reconfigure(next: Config): void
+  /** 今の設定。 */
+  config(): Config
 }
 
 export function createRuntime(
-  config: Config,
+  initialConfig: Config,
   initialState: State,
   cycleDeps: CycleDeps,
   log: Logger,
   io: RuntimeIO,
   locale: Locale,
 ): Runtime {
+  let config = initialConfig
   let state = initialState
   let prevArchived: ReadonlySet<string> | undefined
   let running = false
@@ -200,7 +222,19 @@ export function createRuntime(
     return true
   }
 
-  const block = createSentinel(config, log, locale, io.now, () => blocks(current().mode))
+  // 入力禁止の部品には今の設定を読むビューを渡す(reconfigure の後もそのまま使える)。
+  const blockSettings: BlockSettings = {
+    get idleMinutes() {
+      return config.idleMinutes
+    },
+    get unlockTtlMinutes() {
+      return config.unlockTtlMinutes
+    },
+    get dryRun() {
+      return config.dryRun
+    },
+  }
+  const block = createSentinel(blockSettings, log, locale, io.now, () => blocks(current().mode))
 
   const runtime: Runtime = {
     mode: () => current().mode,
@@ -209,6 +243,17 @@ export function createRuntime(
     onAgentStatus: (status, session) => block.onAgentStatus(status, session),
     unlock: (agent) => block.unlock(agent, unlockInactiveMessage(current().mode, locale)),
     status: (session) => block.statusOf(session, current().mode),
+    config: () => config,
+
+    reconfigure(next) {
+      const before = current().mode
+      config = next
+      const after = current().mode
+      if (archives(after) && !archives(before)) {
+        prevArchived = undefined
+        void runtime.tick()
+      }
+    },
 
     async sentinel(agent, rawInput) {
       const command = parseSentinelArgs(rawInput)
@@ -294,6 +339,15 @@ export function statusResponse(request: Request, lookup: (sessionId: string) => 
   })
 }
 
+/** ログに出す設定の要約。 */
+export function describeConfig(config: Config): string {
+  return (
+    `設定のモード ${config.mode}, 入力禁止 ${config.idleMinutes} 分, both のアーカイブ ${config.archiveAfterMinutes} 分, ` +
+    `/unlock ${config.unlockTtlMinutes} 分, 間隔 ${config.checkIntervalSeconds} 秒` +
+    `${config.dryRun ? ', dryRun' : ''}`
+  )
+}
+
 export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void> {
   const locale = resolveLocale([
     process.env.LC_ALL,
@@ -301,7 +355,8 @@ export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void
     process.env.LANG,
     Intl.DateTimeFormat().resolvedOptions().locale,
   ])
-  const config = parseConfig(rawConfig, locale)
+  // volatile なキーは参照で渡されるので、値に戻してから検証する(docs/spike.md S3)。
+  const config = parseConfig(plainConfig(rawConfig), locale)
   const log = createLogger(ctx.logger, console)
   const home = resolveHome()
   const profile = profileNameOf(ctx)
@@ -336,7 +391,25 @@ export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void
     input: { hint: MESSAGES[locale].commandSentinelInputHint },
     handler: ({ agent, rawInput }) => runtime.sentinel(agent, rawInput),
   })
-  ctx.interval(() => void runtime.tick(), config.checkIntervalSeconds * 1000)
+  let stopInterval = ctx.interval(() => void runtime.tick(), config.checkIntervalSeconds * 1000)
+  // 設定画面で保存した値を、読み込み直さずに反映する(#10、docs/spike.md S3・S4)。
+  // 参照の中身は DSH がスキーマで検証済みだが、未知のキーなどスキーマで弾けないものがあるので parseConfig を通す。
+  ctx.on('loader/volatile-update', () => {
+    let next: Config
+    try {
+      next = parseConfig(plainConfig(rawConfig), locale)
+    } catch (error) {
+      log.warn(`新しい設定を反映できませんでした(前の設定のまま動きます): ${String(error)}`)
+      return
+    }
+    const before = runtime.config()
+    runtime.reconfigure(next)
+    if (next.checkIntervalSeconds !== before.checkIntervalSeconds) {
+      stopInterval()
+      stopInterval = ctx.interval(() => void runtime.tick(), next.checkIntervalSeconds * 1000)
+    }
+    log.info(`設定を反映しました: ${describeConfig(next)}`)
+  })
   ctx.connection.fetch.register({
     path: STATUS_PATH,
     methods: ['GET'],
@@ -344,9 +417,7 @@ export async function apply(ctx: HostContext, rawConfig?: unknown): Promise<void
     fetch: async (request) => statusResponse(request, (id) => runtime.status(ctx.sessions.get(id))),
   })
 
-  log.info(
-    `開始 (モード ${runtime.mode()}, 入力禁止 ${config.idleMinutes} 分, both のアーカイブ ${config.archiveAfterMinutes} 分${config.dryRun ? ', dryRun' : ''})`,
-  )
+  log.info(`開始 (モード ${runtime.mode()}, ${describeConfig(config)})`)
   // どのプロファイルの状態を使っているかを実機で確認できるようにする(プロファイル名が取れないときは共有ファイル)。
   log.info(`状態ファイル: ${location.file}${profile === undefined ? ' (プロファイル名なし)' : ''}`)
   void runtime.tick()
