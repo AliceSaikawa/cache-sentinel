@@ -772,7 +772,8 @@ P1・P2 の挙動は 0.2.1-rc.2 でも同じ(`$PK` は 0.2.1-rc.2 の `node_modu
 emit されるので、そのリスナーからの `session.append` は再入ガードに掛からない。
 `$PK` = rc.2 の `node_modules/@deepseek-ai`。旧版(0.2.0-rc.2 / 0.2.1-rc.1)と比べたのは `dsh-agent` と
 `dsh-agent-loop` の 2 パッケージだけ(`~/AI/tmp/cs-issues/packs/` に `npm pack` で展開したもの)。
-`dsh-session`・`dsh-client-ui-conversation`・`dsh-client-ui-chat` の旧版とは比べていない(Q3・Q4 は rc.2 でだけ確認)。
+`dsh-session`・`dsh-client-ui-conversation`・`dsh-client-ui-chat` の旧版とは、このときは比べていない(Q3・Q4 は rc.2 でだけ確認)。
+0.2.0-rc.2 のこの 3 つと `dsh-commands` は、後から Q7 で比べた(2026-11-02)。
 
 ## Q1: `agent/status` の購読方法 — 確定
 - `$PK/dsh-agent/lib/types/runtime-types.d.ts:243-255` — `'agent/status'(payload: { agent: Agent; status: AgentStatus })`
@@ -874,6 +875,31 @@ Playwright(1280x900、`locale: ja-JP`)で、失効後の送信から 9 秒後の
   (scope の dispatch フィルタが破棄済みの agent を落とすなど。**推測・未確認**)で、その保留は前のターンのものなので捨てる。
 - 0.2.0-rc.2 / 0.2.1-rc.1 も `wakeDriver`・`setPhase`・`kick()` は同じ行(Q2 の版の比較)。
 
+## Q7: 0.2.0-rc.2 の `dsh-session`・UI 側のコード (2026-11-02) — コードで確認(実機は未確認)
+Q3・Q4 で rc.2 だけを見ていた点を、0.2.0-rc.2 の配布物で確かめた。`npm pack @deepseek-ai/<名前>@0.2.0-rc.2` と
+`@0.2.1-rc.2` を展開して並べた(`$P0` = 0.2.0-rc.2 の展開先)。**通知を turn の外に書いたときに最上位の行になる経路は、
+0.2.0-rc.2 でも rc.2 と同じ**と読んだ。画面での確認は [dsh-version-check.md](dsh-version-check.md) の
+「0.2.0-rc.2 での #27 の確認」の手順で行う(この比較では DSH を動かしていない)。
+
+- `agent/status` の payload に `agent` が入る: `$P0/dsh-agent/lib/index.js` の `agentEvents`(`:230-270`)は rc.2 と diff なし。
+  emit は `$P0/dsh-agent-loop/lib/index.js:798`(rc.2 と同じ行)。
+- 再入ガード(Q3): 0.2.0-rc.2 には `publicationEntry()`・`commit()` の分割が無く、`append()`(`$P0/dsh-session/lib/index.js:1441`)
+  の中に同じ処理がある。`:1452` で `appending` なら throw、`:1462` で `appending = true`、`session/event` の observer を
+  呼んでから `:1477` の `finally` で戻す。observer の例外を warn に握り潰す `invokeContainedSessionObservers`
+  (`:1228-1237`)は rc.2(`:1231-1240`)と diff なし。`agent/status` の idle はこの外で emit されるので、Q3 の結論は変わらない。
+- `command/run`・`command/done` は payload に `turn` を持たない: `$P0/dsh-commands/lib/types/types.d.ts:101-118` は rc.2 と同じ。
+- turn への帰属(Q4): `$P0/dsh-client-ui-conversation/lib/client.js`
+  - 全体の組み立て: `:1543` が `explicit.turn ?? currentTurn`、`:1556-1559` が `turn/end` で `currentTurn` を消す(rc.2 の `:2177`・`:2191-2194`)。
+  - ライブの追記: `:1687-1690` が `turn/end` で `currentTurn` を消し(rc.2 `:2328`)、`appendNonBoundary`(`:1697`)が
+    `explicit.turn ?? this.currentTurn` を使う(rc.2 `:2338`)。`resolve` は turn が無ければ `SESSION_LOCATION`(`:1778`、rc.2 `:2424`)。
+  - `payloadCoordinates`(`:1378`)は `data.turn` が無ければ turn を付けない(rc.2 `:2001`)。
+  - rc.2 との違いは座標に `location` を持つかどうかと、セッション直下の座標の入れ方だけで、帰属の規則は同じ。
+- 最上位への配置: `$P0/dsh-client-ui-chat/lib/client.js:10936` の `rootEntries` は、turn の無いノードを最上位に置く(rc.2 `:11644`)。
+  0.2.0-rc.2 だけ、質問への返答に当たる `turn-trigger`(`user/message` から作るノード、`:9305`)を最上位から外す処理があるが、
+  コマンドのノードは対象外。
+- 折りたたみ: `:2303` の `alwaysOpen` は `aborted`・`error` だけで、`blocked` を含まない(rc.2 `:4159` は `interrupted` も含む)。
+  turn の中に書くと隠れる点も rc.2 と同じで、[dsh-version-check.md](dsh-version-check.md) の 0.2.0-rc.2 の記録(#27 の修正前)と合う。
+
 ## 未確認・推測
 - (推測)他のプラグインの `agent/status` の idle リスナーが cache-sentinel より先に走り、その中で同期に `followup` して
   次のドライバを始めると、`running` が入れ子で emit される。このとき cache-sentinel は `running` で保留を捨てるので、
@@ -881,7 +907,8 @@ Playwright(1280x900、`locale: ja-JP`)で、失効後の送信から 9 秒後の
   `dsh-goal-round-driver`(`$PK/dsh-goal-round-driver/lib/index.js:223`)は、ラウンドを始める前に `await` を挟む
   (`drive()`、同 `:108-133`)ので、この形にはならないと読んだ。他の購読元(`dsh-acp`・`dsh-api-session-controller`・
   `dsh-compaction-basic`・`dsh-experimental-agent-team`・`dsh-sdk-jsonrpc-server`)は調べていない。
-- 0.2.0-rc.2・0.2.1-rc.1 の実機。`dsh-session`・UI 側の旧版のコード。
+- 0.2.0-rc.2・0.2.1-rc.1 の実機(#27 の修正後)。0.2.0-rc.2 はコードだけ Q7 で比べた。0.2.1-rc.1 の `dsh-session`・UI 側のコードは比べていない。
+  0.2.1-rc.3 の実機では確認した([dsh-version-check.md](dsh-version-check.md) の「0.2.1-rc.3 での確認」)。
 
 ## 確認の再現方法
 1. `node --experimental-strip-types` は不要。WT で `pnpm pack` して tgz を作る。

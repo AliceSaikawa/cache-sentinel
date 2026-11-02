@@ -12,7 +12,7 @@
 ## 開発時の記録
 
 - [spike.md](spike.md): DSH 本体の型定義・API・イベント仕様の調査記録
-- [dsh-version-check.md](dsh-version-check.md): 対応範囲の両端(DSH 0.2.0-rc.2・0.2.1-rc.1)での実機確認記録(Issue #12、2026-10-18)。範囲はその後 #31 で 0.2.1-rc.2 まで拡大(rc.2 は実機未確認)。0.2.1-rc.3 まで広げたときの実機確認(2026-10-26)も同じ文書にある。0.2.1-rc.4・rc.5・0.2.2-alpha.2 は実機未確認(2026-11-01、spike.md に比較の記録)
+- [dsh-version-check.md](dsh-version-check.md): 対応範囲の両端(DSH 0.2.0-rc.2・0.2.1-rc.1)での実機確認記録(Issue #12、2026-10-18)。範囲はその後 #31 で 0.2.1-rc.2 まで拡大(rc.2 は実機未確認)。0.2.1-rc.3 まで広げたときの実機確認(2026-10-26)も同じ文書にある。0.2.1-rc.4・rc.5・0.2.2-alpha.2 は実機未確認(2026-11-01、spike.md に比較の記録)。#27 の修正後の 0.2.0-rc.2 での確認手順もある(実施は未了)
 - [multi-profile-check.md](multi-profile-check.md): 複数プロファイルの同時利用での `state.json` とアーカイブ状態の競合の実機確認記録(Issue #9、2026-11-02)
 - [rdsh-check.md](rdsh-check.md): rustdsh 環境(Desktop・同梱プラグイン)での動作確認記録(Issue #16、2026-10-17)
 - [rdsh-proposal.md](rdsh-proposal.md): rustdsh の推奨プラグインへの追加の提案の下書きと、判断が要る点(Issue #17、2026-11-02)
