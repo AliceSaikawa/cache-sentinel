@@ -72,7 +72,7 @@ jobs:
         run: pnpm pack --out cache-sentinel.tgz
 
       # The generated notes end each line with "by @<author> in <PR URL>";
-      # scripts/release-notes.ts rewrites that to "(#<number>)".
+      # scripts/release-notes.ts rewrites that to "(#<number>)" and drops New Contributors.
       # `gh release create` fails if a Release for the tag already exists, so a
       # published asset is never overwritten.
       - name: Create the GitHub Release
@@ -81,4 +81,9 @@ jobs:
         run: |
           gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" --jq .body \
             | node scripts/release-notes.ts > release-notes.md
-          gh release create "$GITHUB_REF_NAME" cache-sentinel.tgz --title "$GITHUB_REF_NAME" --notes-file release-notes.md --verify-tag
+          tag_version="${GITHUB_REF_NAME#v}"
+          prerelease_flag=
+          if echo "$tag_version" | grep -qE -- '-(rc|alpha|beta)(\.|-|$)'; then
+            prerelease_flag=--prerelease
+          fi
+          gh release create "$GITHUB_REF_NAME" cache-sentinel.tgz --title "$GITHUB_REF_NAME" --notes-file release-notes.md --verify-tag $prerelease_flag

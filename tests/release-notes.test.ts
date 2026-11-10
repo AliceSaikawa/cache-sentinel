@@ -24,18 +24,36 @@ test('tidyReleaseNotes は PR の行の @メンションと URL を (#番号) �
   )
 })
 
-test('tidyReleaseNotes は bot の作者も除き、PR の形でない行は変えない', () => {
+test('tidyReleaseNotes は New Contributors 節を除き、bot の作者行も (#番号) にする', () => {
   const body = [
-    '* chore(deps): bump esbuild by @dependabot[bot] in https://github.com/AliceSaikawa/cache-sentinel/pull/60',
-    '* 手で書いた行 by @AliceSaikawa',
-    'Thanks @AliceSaikawa in https://github.com/AliceSaikawa/cache-sentinel/pull/61',
+    "## What's Changed",
+    '* feat: example by @dependabot[bot] in https://github.com/AliceSaikawa/cache-sentinel/pull/60',
+    '',
+    '## New Contributors',
+    '* @dsh-superagent-hope made their first contribution in https://github.com/AliceSaikawa/cache-sentinel/pull/51',
+    '',
+    '**Full Changelog**: https://github.com/AliceSaikawa/cache-sentinel/compare/v0.6.0...v0.7.0-rc.1',
   ].join('\n')
+  const out = tidyReleaseNotes(body)
+  assert.equal(
+    out,
+    [
+      "## What's Changed",
+      '* feat: example (#60)',
+      '',
+      '**Full Changelog**: https://github.com/AliceSaikawa/cache-sentinel/compare/v0.6.0...v0.7.0-rc.1',
+    ].join('\n'),
+  )
+  assert.ok(!out.includes('@'))
+  assert.ok(!out.includes('/pull/'))
+})
+
+test('tidyReleaseNotes は PR の形でない行は変えない', () => {
+  const body = ['* 手で書いた行 by @AliceSaikawa', 'Thanks @AliceSaikawa in https://github.com/AliceSaikawa/cache-sentinel/pull/61'].join(
+    '\n',
+  )
   assert.equal(
     tidyReleaseNotes(body),
-    [
-      '* chore(deps): bump esbuild (#60)',
-      '* 手で書いた行 by @AliceSaikawa',
-      'Thanks @AliceSaikawa in https://github.com/AliceSaikawa/cache-sentinel/pull/61',
-    ].join('\n'),
+  ['* 手で書いた行 by @AliceSaikawa', 'Thanks @AliceSaikawa in https://github.com/AliceSaikawa/cache-sentinel/pull/61'].join('\n'),
   )
 })
