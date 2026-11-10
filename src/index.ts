@@ -117,8 +117,8 @@ export interface RuntimeIO {
  * アプリが渡すプロファイルの経路は確認していないので念のために検査する。
  */
 export function profileNameOf(ctx: { get?(name: string): unknown }): string | undefined {
-  const profile = ctx.get?.('profileContext') as { name?: unknown } | undefined
-  const name = profile?.name
+  const raw = ctx.get?.('profileContext')
+  const name = typeof raw === 'object' && raw !== null ? Reflect.get(raw, 'name') : undefined
   if (typeof name !== 'string') return undefined
   const invalid =
     name === '' || name.includes('/') || name.includes('\\') || name === '.' || name === '..' || name === 'node_modules'
