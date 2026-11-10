@@ -48,6 +48,24 @@ test('tidyReleaseNotes は New Contributors 節を除き、bot の作者行も (
   assert.ok(!out.includes('/pull/'))
 })
 
+test('tidyReleaseNotes は New Contributors 削除後に連続する空行を 1 組にまとめる', () => {
+  const body = [
+    "## What's Changed",
+    '* feat: one (#1)',
+    '',
+    '## New Contributors',
+    '* @user in https://github.com/o/r/pull/2',
+    '',
+    '',
+    '',
+    '**Full Changelog**: https://github.com/o/r/compare/v1...v2',
+  ].join('\n')
+  assert.equal(
+    tidyReleaseNotes(body),
+    ["## What's Changed", '* feat: one (#1)', '', '**Full Changelog**: https://github.com/o/r/compare/v1...v2'].join('\n'),
+  )
+})
+
 test('tidyReleaseNotes は PR の形でない行は変えない', () => {
   const body = ['* 手で書いた行 by @AliceSaikawa', 'Thanks @AliceSaikawa in https://github.com/AliceSaikawa/cache-sentinel/pull/61'].join(
     '\n',
