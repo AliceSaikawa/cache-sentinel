@@ -167,5 +167,8 @@ export function plainConfig(raw: unknown): unknown {
 }
 
 function isVolatileRef(value: unknown): value is { get(): unknown } {
-  return typeof value === 'object' && value !== null && typeof (value as { get?: unknown }).get === 'function'
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  return typeof Reflect.get(value, 'get') === 'function'
 }
