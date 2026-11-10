@@ -21,9 +21,10 @@ import {
   type SnapshotStore,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { createElement as h } from 'react'
+import { DEFAULTS } from '../config.ts'
 import type { Locale } from '../i18n.ts'
 import { MESSAGES, type SettingsKey } from '../messages.ts'
-import { MODES, type Mode } from '../modes.ts'
+import { asMode, MODES, type Mode } from '../modes.ts'
 import { fieldSpecs, SETTINGS_FIELDS } from './settings-fields.ts'
 
 /** Host のエントリ id(cordis.patch.yml の `id`)。設定サービスの名前空間になる。 */
@@ -233,7 +234,7 @@ export function SettingsPage(props: SettingsPageProps) {
           head(props, key, fieldState, disabled, `${id}-label`),
           h(SegmentedControl, {
             id,
-            value: (MODES as readonly string[]).includes(fieldState.text) ? (fieldState.text as Mode) : 'block',
+            value: asMode(fieldState.text, DEFAULTS.mode),
             options: MODES.map((mode) => ({ value: mode, label: m.settingsModeOptions[mode] })),
             label: m.settingsLabels.mode,
             disabled,
@@ -241,6 +242,10 @@ export function SettingsPage(props: SettingsPageProps) {
           }),
           h('p', { className: 'cache-sentinel-settings-hint' }, m.settingsHints.mode),
         )
+      default: {
+        const unexpected: never = field
+        throw new Error(`unknown settings field: ${JSON.stringify(unexpected)}`)
+      }
     }
   })
 
