@@ -37,8 +37,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # #10: 本物の @deepseek-ai/schemastery で validate を回す(依存は npm が解決。package.json には入れない)。
+      - name: Install schemastery for integration tests
+        shell: bash
+        run: |
+          mkdir -p .ci-schemastery
+          npm init -y --prefix .ci-schemastery >/dev/null 2>&1
+          npm install --prefix .ci-schemastery @deepseek-ai/schemastery@3.19.0 --silent
+
       # The tests are TypeScript and run directly on Node (native type stripping).
       - name: Test
+        env:
+          CACHE_SENTINEL_SCHEMASTERY: ${{ github.workspace }}/.ci-schemastery/node_modules/@deepseek-ai/schemastery
         run: pnpm test
 
       - name: Typecheck
