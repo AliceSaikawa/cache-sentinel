@@ -90,6 +90,10 @@ export function fieldSpecs(): FieldSpec[] {
         return integerField(field.key, field.min)
       case 'boolean':
         return booleanField(field.key)
+      default: {
+        const unexpected: never = field
+        throw new Error(`unknown settings field: ${JSON.stringify(unexpected)}`)
+      }
     }
   })
 }

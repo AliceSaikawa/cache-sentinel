@@ -4,7 +4,9 @@
  *
  * 本物の `@deepseek-ai/schemastery` は DSH が実行時に提供するもので、このリポジトリの依存には無い。
  * 本物で確かめるテストは、環境変数 `CACHE_SENTINEL_SCHEMASTERY` にそのパッケージのディレクトリを渡したときだけ動く
- * (例: `<DSH のインストール先>/node_modules/@deepseek-ai/schemastery`)。渡さなければ skip する。
+ * (例: `<DSH のインストール先>/node_modules/@deepseek-ai/schemastery`、または CI の `.ci-schemastery/...`)。
+ * 渡さなければ skip する。schemastery 単体(依存未解決)を指した場合は読み込みに失敗し skip するが、
+ * テストファイル全体は落ちない。
  */
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -163,12 +165,34 @@ test('#10: schemastery が無い環境では Config は undefined', async () => 
 // ---- 本物の schemastery での検証(環境変数があるときだけ) ----
 
 const realDir = process.env.CACHE_SENTINEL_SCHEMASTERY
-const real: SchemaFactory | undefined = (() => {
-  if (realDir === undefined || realDir === '') return undefined
-  const require = createRequire(join(realDir, 'package.json'))
-  return require(realDir) as SchemaFactory
-})()
-const realSkip = real === undefined ? 'CACHE_SENTINEL_SCHEMASTERY が無い(本物の schemastery は DSH が提供する)' : false
+
+/** 本物の schemastery を読む。依存(@deepseek-ai/cosmokit など)が無いときは undefined(テスト全体を落とさない)。 */
+function loadRealSchemaFactory(dir: string): SchemaFactory | undefined {
+  try {
+    const require = createRequire(join(dir, 'package.json'))
+    const loaded: unknown = require(dir)
+    if (typeof loaded === 'function') {
+      return loaded as unknown as SchemaFactory
+    }
+    if (typeof loaded === 'object' && loaded !== null && 'default' in loaded) {
+      const factory = (loaded as { default: unknown }).default
+      if (typeof factory === 'function') {
+        return factory as unknown as SchemaFactory
+      }
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+const real = realDir !== undefined && realDir !== '' ? loadRealSchemaFactory(realDir) : undefined
+const realSkip =
+  real === undefined
+    ? realDir !== undefined && realDir !== ''
+      ? 'CACHE_SENTINEL_SCHEMASTERY を読めない(本物の schemastery と依存、または DSH の node_modules を指す)'
+      : 'CACHE_SENTINEL_SCHEMASTERY が無い(本物の schemastery は DSH が提供する)'
+    : false
 
 interface RealSchema {
   (value: unknown): unknown
